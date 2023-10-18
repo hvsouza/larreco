@@ -61,7 +61,7 @@ namespace {
   TVector3 const basex{1, 0, 0};
   TVector3 const basey{0, 1, 0};
   TVector3 const basez{0, 0, 1};
-  constexpr float kcal{0.0024};
+  constexpr float kcal{2.4}; // Approximation of dE/dx for mip muon in LAr
 
   class FcnWrapper {
   public:
@@ -95,16 +95,18 @@ namespace {
         constexpr double rad_length{14.0};
         double const l0 = xx / rad_length;
         double res1 = 0.0;
-
+        // Highland formula
+        // Parameters given at Particle Data Group https://pdg.lbl.gov/2023/web/viewer.html?file=../reviews/rpp2022-rev-passage-particles-matter.pdf
         if (xx > 0 && p > 0) res1 = (13.6 / p) * std::sqrt(l0) * (1.0 + 0.038 * std::log(l0));
-
+        res1*=1000;
         res1 = std::sqrt(res1 * res1 + theta0 * theta0);
 
         double const diff = yy - res1;
         result += cet::square(diff / ey);
       }
 
-      result += 2.0 / (4.6) * theta0; // *std::log( 1.0/14.0 );
+      // Adds a penalty for higher resolutions
+      // result += 2.0 / (4.6) * theta0; // *std::log( 1.0/14.0 );
 
       if (std::isnan(result) || std::isinf(result)) {
         MF_LOG_DEBUG("TrackMomentumCalculator") << " Is nan in my_mcs_chi2 ! ";
@@ -120,12 +122,92 @@ namespace {
     std::vector<double> const eymeas_;
   };
 
+  class FcnWrapperLLHD {
+  public:
+    explicit FcnWrapperLLHD(std::vector<float>& dEi,
+                            std::vector<float>& dEj,
+                            std::vector<float>& dthij,
+                            std::vector<float>& ind,
+                            std::vector<float> stepsize)
+      : dEi_{dEi}, dEj_{dEj}, dthij_{dthij}, ind_{ind}, stepsize_{stepsize}
+    {}
+
+    double my_mcs_llhd(double const* x) const
+    {
+      double result = 0.0;
+      constexpr double rad_length{14.0};
+      double addth = 0;
+
+      double p = x[0];
+      double theta0 = x[1];
+
+      auto const n = dEi_.size(); // number of segments of energy
+
+
+      // std::cout << "MININIZE: " << std::endl;
+      for (std::size_t i = 0; i < n; ++i) {
+        double Ei = p - dEi_.at(i); // Estimated energy at point i
+        double Ej = p - dEj_.at(i); // Estimated enery at point j
+
+        double red_length = (stepsize_.at(i+1)-stepsize_.at(i)) / rad_length;
+        // If the momentum p choosen allows that the muon stopped inside, add 1 rad to the change in scatter angle (as the particle stops)
+        if (Ei > 0 && Ej < 0) 
+        {
+          return 999999999.; // To optimize for escaping muons. 
+          addth = 3.14 * 1000.0;
+        }
+
+        Ei = std::abs(Ei);
+        Ej = std::abs(Ej);
+
+        // Highland formula
+        // Parameters given at Particle Data Group https://pdg.lbl.gov/2023/web/viewer.html?file=../reviews/rpp2022-rev-passage-particles-matter.pdf
+        double tH0 =
+          (13.6 / std::sqrt(Ei * Ej)) * (1.0 + 0.038 * std::log(red_length)) * std::sqrt(red_length);
+
+        tH0*=1000;
+
+        double rms = -1.0;
+
+        double prob = 0;
+        double DT = 0;
+        if (ind_.at(i) == 1) {
+          // Computes the rms of angle
+          rms = std::sqrt(tH0 * tH0 + cet::square(theta0));
+
+          DT = dthij_.at(i) + addth;
+          if (rms == 0.)
+            std::cerr << " Error : The code tries to divide by zero ! " << std::endl;
+          else{
+            prob = -0.5 * std::log(2.0 * TMath::Pi()) - std::log(rms) - 0.5 * DT * DT / (rms*rms);
+
+          }
+        }
+        result = result - 2.0 * prob; // Adds for each segment
+        // std::cout << i << " " << Ei << " " << Ej << " " << tH0 << " " << DT << " " << result << std::endl;
+      }
+
+
+      return result;
+    }
+
+  private:
+    std::vector<float> const dEi_;
+    std::vector<float> const dEj_;
+    std::vector<float> const dthij_;
+    std::vector<float> const ind_;
+    std::vector<float> const stepsize_;
+  };
+
+
 }
 
 namespace trkf {
 
-  TrackMomentumCalculator::TrackMomentumCalculator(double const min, double const max)
-    : minLength{min}, maxLength{max}
+  TrackMomentumCalculator::TrackMomentumCalculator(double const min,
+                                                   double const max,
+                                                   double const stepsize)
+    : minLength{min}, maxLength{max}, steps_size{stepsize}
   {
     for (int i = 1; i <= n_steps; i++) {
       steps.push_back(steps_size * i);
@@ -239,7 +321,11 @@ namespace trkf {
 
   // email: kalousis@vt.edu
 
-  double TrackMomentumCalculator::GetMomentumMultiScatterLLHD(const art::Ptr<recob::Track>& trk)
+  double TrackMomentumCalculator::GetMomentumMultiScatterLLHD(const art::Ptr<recob::Track>& trk,
+                                                              const bool checkValidPoints,
+                                                              const int maxMomentum_MeV,
+                                                              const int MomentumStep_MeV,
+                                                              const int max_resolution)
   {
     std::vector<float> recoX;
     std::vector<float> recoY;
@@ -247,7 +333,9 @@ namespace trkf {
 
     int n_points = trk->NumberTrajectoryPoints();
 
+    // std::cout << "\n";
     for (int i = 0; i < n_points; i++) {
+      if (checkValidPoints && !trk->HasValidPoint(i)) continue;
       auto const& pos = trk->LocationAtPoint(i);
       recoX.push_back(pos.X());
       recoY.push_back(pos.Y());
@@ -258,7 +346,7 @@ namespace trkf {
 
     if (!plotRecoTracks_(recoX, recoY, recoZ)) return -1.0;
 
-    constexpr double seg_size{10.};
+    double const seg_size{steps_size};
 
     auto const segments = getSegTracks_(recoX, recoY, recoZ, seg_size);
     if (!segments.has_value()) return -1.0;
@@ -275,29 +363,62 @@ namespace trkf {
     std::vector<float> ind;
     if (getDeltaThetaij_(dEi, dEj, dthij, ind, *segments, seg_size) != 0) return -1.0;
 
-    double logL = 1e+16;
-    double bf = -666.0; // double errs = -666.0;
 
-    int const start1{};
-    int const end1{750};
-    int const start2{};
-    int const end2{}; // 800.0;
+    ROOT::Minuit2::Minuit2Minimizer mP{};
+    FcnWrapperLLHD const wrapper{(dEi), (dEj), (dthij), (ind), (segments->L)};
+    ROOT::Math::Functor FCA([&wrapper](double const* xs) { return wrapper.my_mcs_llhd(xs); }, 2);
 
-    for (int k = start1; k <= end1; ++k) {
-      double const p_test = 0.001 + k * 0.01;
+    mP.SetFunction(FCA);
+    mP.SetLimitedVariable(0, "p_{MCS}", 1000.0, 500, 1, maxMomentum_MeV);
+    mP.SetLimitedVariable(1, "#delta#theta", 2.0, 0.2, 0.5, 5.0);
+    mP.FixVariable(1);
+    mP.SetMaxFunctionCalls(1.E9);
+    mP.SetMaxIterations(1.E9);
+    mP.SetTolerance(0.01);
+    mP.SetStrategy(2);
+    mP.SetErrorDef(1.0);
 
-      for (int l = start2; l <= end2; ++l) {
-        double const res_test = 2.0; // 0.001+l*1.0;
-        double const fv = my_mcs_llhd(dEi, dEj, dthij, ind, p_test, res_test);
+    bool const mstatus = mP.Minimize();
 
-        if (fv < logL) {
-          bf = p_test;
-          logL = fv;
-          // errs = res_test;
-        }
-      }
-    }
-    return bf;
+    mP.Hesse();
+
+    const double* pars = mP.X();
+    const double* erpars = mP.Errors();
+
+
+    double const p_mcs = pars[0]/1000;
+    double const p_mcs_e [[maybe_unused]] = erpars[0];
+    std::cout << pars[1] << std::endl;
+    return mstatus ? p_mcs : -1.0;
+
+    // double logL = 1e+16;
+    // double bf = -666.0; // double errs = -666.0;
+
+    // int const start1{};
+    // int const end1{static_cast<int>(maxMomentum_MeV / MomentumStep_MeV)};
+    // int const start2{};
+    // int const end2{max_resolution}; // 800.0;
+
+    // double *tmp = new double[2];
+    // for (int k = start1; k <= end1; ++k) {
+    //   double const p_test = 0.001 + k * 0.01;
+
+    //   for (int l = start2; l <= end2; ++l) {
+    //     double const res_test = (start2 == end2) ? 2.0 : 0.001 + l * 1.0; // 0.001+l*1.0;
+    //     tmp[0] = p_test;
+    //     tmp[1] = res_test;
+    //     double const fv = my_mcs_llhd(dEi, dEj, dthij, ind, p_test, res_test);
+    //     // double const fv = wrapper.my_mcs_llhd(tmp);
+
+    //     if (fv < logL) {
+    //       bf = tmp[0];
+    //       logL = fv;
+    //       // errs = res_test;
+    //     }
+    //   }
+    // }
+    // delete tmp;
+    // return bf;
   }
 
   TVector3 TrackMomentumCalculator::GetMultiScatterStartingPoint(const art::Ptr<recob::Track>& trk)
@@ -381,13 +502,19 @@ namespace trkf {
     auto const& segL = segments.L;
 
     int tot = a1 - 1;
-    double thick1 = thick + 0.13;
+    double thick1 = thick + 0.13; // adds a small offset to the 10 cm segment
+    if (thick==0){
+      thick1 = 0;
+    }
+
+    // std::cout << "\nStart... " << endl;
 
     for (int i = 0; i < tot; i++) {
       double const dx = segnx.at(i);
       double const dy = segny.at(i);
       double const dz = segnz.at(i);
 
+      // Assumes z as propagation angle
       TVector3 const vec_z{dx, dy, dz};
       TVector3 vec_x;
       TVector3 vec_y;
@@ -409,13 +536,13 @@ namespace trkf {
 
       double const refL = segL.at(i);
 
+      // Now loop over next segments until thick1 is reached in the next segment
       for (int j = i; j < tot; j++) {
         double const L1 = segL.at(j);
-        double const L2 = segL.at(j + 1);
+        double const L2 = segL.at(j+1);
 
         double const dz1 = L1 - refL;
         double const dz2 = L2 - refL;
-
         if (dz1 <= thick1 && dz2 > thick1) {
           double const here_dx = segnx.at(j);
           double const here_dy = segny.at(j);
@@ -425,31 +552,40 @@ namespace trkf {
           TVector3 const rot_here{Rx.Dot(here_vec), Ry.Dot(here_vec), Rz.Dot(here_vec)};
 
           double const scx = rot_here.X();
-          double const scy = rot_here.Y();
+          // double const scy = rot_here.Y();
           double const scz = rot_here.Z();
 
-          double const azy = find_angle(scz, scy);
+          // double const azy = find_angle(scz, scy);
           double const azx = find_angle(scz, scx);
 
-          constexpr double ULim = 10000.0;
+          constexpr double ULim = 10000.0; // Avoid huge (wrong) angles
           constexpr double LLim = -10000.0;
 
           double const cL = kcal;
           double const Li = segL.at(i);
           double const Lj = segL.at(j);
 
-          if (azy <= ULim && azy >= LLim) {
-            ei.push_back(Li * cL);
-            ej.push_back(Lj * cL);
-            th.push_back(azy);
-            ind.push_back(2);
-          }
+          // if (azy <= ULim && azy >= LLim) { // save scatter in the yz plane
+          //   ei.push_back(Li * cL);          // Energy deposited at i
+          //   ej.push_back(Lj * cL);          // Energy deposited at j
+          //   th.push_back(azy);              // scattered angle
+          //   ind.push_back(2);
+          // }
 
-          if (azx <= ULim && azx >= LLim) {
+          if (azx <= ULim && azx >= LLim) { // save scatter in the za plane
             ei.push_back(Li * cL);
             ej.push_back(Lj * cL);
             th.push_back(azx);
             ind.push_back(1);
+            std::cout << "\ni: " << i << " ";
+            std::cout << "j: " << j << " ";
+            std::cout << "ei: " << Li * cL << " ";
+            std::cout << "ej: " << Lj * cL << " ";
+            std::cout << "azx: " << azx << " \n";
+          }
+          else{
+            std::cerr << "SOMETHING BAD!!! " << std::endl;  
+            std::cerr << scx << " " << scz << " " << azx << std::endl;
           }
 
           break; // of course !
@@ -461,7 +597,8 @@ namespace trkf {
   }
 
   double TrackMomentumCalculator::GetMomentumMultiScatterChi2(const art::Ptr<recob::Track>& trk,
-                                                              const bool checkValidPoints)
+                                                              const bool checkValidPoints,
+                                                              const int maxMomentum_MeV)
   {
     std::vector<float> recoX;
     std::vector<float> recoY;
@@ -497,11 +634,17 @@ namespace trkf {
     std::vector<double> xmeas;
     std::vector<double> ymeas;
     std::vector<double> eymeas;
-    xmeas.reserve(n_steps);
-    ymeas.reserve(n_steps);
-    eymeas.reserve(n_steps);
-    for (int j = 0; j < n_steps; j++) {
-      double const trial = steps.at(j);
+    int nmeas = segments->L.size()-1;
+    xmeas.reserve(nmeas);
+    ymeas.reserve(nmeas);
+    eymeas.reserve(nmeas);
+    for (int j = 0; j < nmeas; j++) {
+      double const trial = segments->L.at(j+1) - segments->L.at(0);
+      // if (trial > 20*rad_length) break;
+      if (j==n_steps) break;
+      
+      // std::cout << "\ntrial: " << trial << endl;
+      // double const trial = steps.at(j);
       auto const [mean, rms, rmse] = getDeltaThetaRMS_(*segments, trial);
 
       if (std::isnan(mean) || std::isinf(mean)) {
@@ -517,6 +660,7 @@ namespace trkf {
         continue;
       }
 
+      if (mean == -1 && rms == -1 && rmse == -1) continue;
       xmeas.push_back(trial); // Is this what is intended?
       ymeas.push_back(rms);
       eymeas.push_back(std::sqrt(cet::sum_of_squares(
@@ -545,12 +689,13 @@ namespace trkf {
     gr_meas.SetMaximum(1.80 * ymax);
 
     ROOT::Minuit2::Minuit2Minimizer mP{};
-    FcnWrapper const wrapper{move(xmeas), move(ymeas), move(eymeas)};
+    FcnWrapper const wrapper{std::move(xmeas), std::move(ymeas), std::move(eymeas)};
     ROOT::Math::Functor FCA([&wrapper](double const* xs) { return wrapper.my_mcs_chi2(xs); }, 2);
 
     mP.SetFunction(FCA);
-    mP.SetLimitedVariable(0, "p_{MCS}", 1.0, 0.01, 0.001, 7.5);
-    mP.SetLimitedVariable(1, "#delta#theta", 0.0, 1.0, 0.0, 45.0);
+    mP.SetLimitedVariable(0, "p_{MCS}", 1000.0, 10, 1, maxMomentum_MeV);
+    mP.SetLimitedVariable(1, "#delta#theta", 2.0, 0.2, 0.5, 5.0);
+    mP.FixVariable(1);
     mP.SetMaxFunctionCalls(1.E9);
     mP.SetMaxIterations(1.E9);
     mP.SetTolerance(0.01);
@@ -566,8 +711,9 @@ namespace trkf {
 
     double const deltap = (recoL * kcal) / 2.0;
 
-    double const p_mcs = pars[0] + deltap;
+    double const p_mcs = (pars[0] + deltap)/1000.;
     double const p_mcs_e [[maybe_unused]] = erpars[0];
+    std::cout << pars[1] << std::endl;
     return mstatus ? p_mcs : -1.0;
   }
 
@@ -601,12 +747,183 @@ namespace trkf {
     return true;
   }
 
+  void TrackMomentumCalculator::compute_max_fluctuation_vector(const std::vector<float> segx,
+                                                               const std::vector<float> segy,
+                                                               const std::vector<float> segz,
+                                                               std::vector<float>& segnx,
+                                                               std::vector<float>& segny,
+                                                               std::vector<float>& segnz,
+                                                               std::vector<float>& vx,
+                                                               std::vector<float>& vy,
+                                                               std::vector<float>& vz)
+  {
+    auto const na = vx.size();
+
+    double sumx = 0.0;
+    double sumy = 0.0;
+    double sumz = 0.0;
+
+    for (std::size_t i = 0; i < na; ++i) {
+      sumx += vx.at(i);
+      sumy += vy.at(i);
+      sumz += vz.at(i);
+    }
+
+    sumx /= na;
+    sumy /= na;
+    sumz /= na;
+
+    std::vector<double> mx;
+    std::vector<double> my;
+    std::vector<double> mz;
+
+    TMatrixDSym m(3);
+
+    for (std::size_t i = 0; i < na; ++i) {
+      double const xxw1 = vx.at(i);
+      double const yyw1 = vy.at(i);
+      double const zzw1 = vz.at(i);
+
+      mx.push_back(xxw1 - sumx);
+      my.push_back(yyw1 - sumy);
+      mz.push_back(zzw1 - sumz);
+
+      double const xxw0 = mx.at(i);
+      double const yyw0 = my.at(i);
+      double const zzw0 = mz.at(i);
+
+      m(0, 0) += xxw0 * xxw0 / na;
+      m(0, 1) += xxw0 * yyw0 / na;
+      m(0, 2) += xxw0 * zzw0 / na;
+
+      m(1, 0) += yyw0 * xxw0 / na;
+      m(1, 1) += yyw0 * yyw0 / na;
+      m(1, 2) += yyw0 * zzw0 / na;
+
+      m(2, 0) += zzw0 * xxw0 / na;
+      m(2, 1) += zzw0 * yyw0 / na;
+      m(2, 2) += zzw0 * zzw0 / na;
+    }
+
+    TMatrixDSymEigen me(m);
+
+    TVectorD eigenval = me.GetEigenValues();
+    TMatrixD eigenvec = me.GetEigenVectors();
+
+    double max1 = -666.0;
+
+    double ind1 = 0;
+
+    for (int i = 0; i < 3; ++i) {
+      double const p1 = eigenval(i);
+
+      if (p1 > max1) {
+        max1 = p1;
+        ind1 = i;
+      }
+    }
+
+    double ax = eigenvec(0, ind1);
+    double ay = eigenvec(1, ind1);
+    double az = eigenvec(2, ind1);
+
+    if (n_seg > 1) {
+      if (segx.at(n_seg - 1) - segx.at(n_seg - 2) > 0)
+        ax = std::abs(ax);
+      else
+        ax = -1.0 * std::abs(ax);
+
+      if (segy.at(n_seg - 1) - segy.at(n_seg - 2) > 0)
+        ay = std::abs(ay);
+      else
+        ay = -1.0 * std::abs(ay);
+
+      if (segz.at(n_seg - 1) - segz.at(n_seg - 2) > 0)
+        az = std::abs(az);
+      else
+        az = -1.0 * std::abs(az);
+
+      segnx.push_back(ax);
+      segny.push_back(ay);
+      segnz.push_back(az);
+    }
+    vx.clear();
+    vy.clear();
+    vz.clear();
+  }
+  std::optional<TrackMomentumCalculator::Segments> TrackMomentumCalculator::getSegEachPoint(
+    std::vector<float> const& xxx,
+    std::vector<float> const& yyy,
+    std::vector<float> const& zzz)
+  {
+
+    int a1 = xxx.size();
+    int a2 = yyy.size();
+    int a3 = zzz.size();
+
+    if ((a1 != a2) || (a1 != a3) || (a2 != a3)) {
+      cout << " ( Digitize reco tacks ) Error ! " << endl;
+      return std::nullopt;
+    }
+
+    std::vector<float> segx, segnx;
+    std::vector<float> segy, segny;
+    std::vector<float> segz, segnz;
+    std::vector<float> segL;
+
+
+    double x0{};
+    double y0{};
+    double z0{};
+
+    double x00 = xxx.at(0);
+    double y00 = yyy.at(0);
+    double z00 = zzz.at(0);
+    segx.push_back(x00);
+    segy.push_back(y00);
+    segz.push_back(z00);
+
+    double RR0 = 0;
+    segL.push_back(RR0);
+
+    for (int i = 1; i < a1-1; i++) {
+      x0 = xxx.at(i);
+      y0 = yyy.at(i);
+      z0 = zzz.at(i);
+
+      double const dRR0 = std::sqrt(cet::sum_of_squares(x0 - x00, y0 - y00, z0 - z00));
+      RR0+=dRR0;
+      segx.push_back(x0);
+      segy.push_back(y0);
+      segz.push_back(z0);
+
+      segL.push_back(RR0);
+
+      double const vx = (x0-x00);
+      double const vy = (y0-y00);
+      double const vz = (z0-z00);
+      segnx.push_back(vx/dRR0);
+      segny.push_back(vy/dRR0);
+      segnz.push_back(vz/dRR0);
+      
+      x00 = x0;
+      y00 = y0;
+      z00 = z0;
+    }
+
+    return std::make_optional<Segments>(Segments{segx, segnx, segy, segny, segz, segnz, segL});
+  }
+
   std::optional<TrackMomentumCalculator::Segments> TrackMomentumCalculator::getSegTracks_(
     std::vector<float> const& xxx,
     std::vector<float> const& yyy,
     std::vector<float> const& zzz,
     double const seg_size)
   {
+    // std::cout << "\n";
+
+    if (seg_size == 0)
+      return getSegEachPoint(xxx, yyy, zzz);
     double stag = 0.0;
 
     int a1 = xxx.size();
@@ -648,8 +965,14 @@ namespace trkf {
       y0 = yyy.at(i);
       z0 = zzz.at(i);
 
+
       double const RR0 = std::sqrt(cet::sum_of_squares(x00 - x0, y00 - y0, z00 - z0));
 
+      // std::cout << "i" << " " << i << " ";
+      // std::cout << "x0" << " " << x0 << " ";
+      // std::cout << "y0" << " " << y0 << " ";
+      // std::cout << "z0" << " " << z0 << " ";
+      // std::cout << "dr0" << " " << RR0 << endl;
       if (RR0 >= stag) {
         segx.push_back(x0);
         segy.push_back(y0);
@@ -688,7 +1011,20 @@ namespace trkf {
 
       double const dr2 = std::sqrt(cet::sum_of_squares(x2 - x0, y2 - y0, z2 - z0));
 
+//       std::cout << "i" << " " << i << " ";
+//       std::cout << "x1" << " " << x1 << " ";
+//       std::cout << "y1" << " " << y1 << " ";
+//       std::cout << "z1" << " " << z1 << " ";
+//       std::cout << "dr1" << " " << dr1 << endl;
+
+//       std::cout << "i" << " " << i << " ";
+//       std::cout << "x2" << " " << x2 << " ";
+//       std::cout << "y2" << " " << y2 << " ";
+//       std::cout << "z2" << " " << z2 << " ";
+//       std::cout << "dr2" << " " << dr2 << "\n" << endl;
+
       if (dr1 < seg_size) {
+        // std::cout << "normal step" << endl;
         vx.push_back(x1);
         vy.push_back(y1);
         vz.push_back(z1);
@@ -697,6 +1033,7 @@ namespace trkf {
       }
 
       if (dr1 <= seg_size && dr2 > seg_size) {
+        // std::cout << "quadratic sutff step" << endl;
         double const dx = x2 - x1;
         double const dy = y2 - y1;
         double const dz = z2 - z1;
@@ -744,112 +1081,18 @@ namespace trkf {
         vz.push_back(z0);
 
         ntot++;
-
-        auto const na = vx.size();
-        double sumx = 0.0;
-        double sumy = 0.0;
-        double sumz = 0.0;
-
-        for (std::size_t i = 0; i < na; ++i) {
-          sumx += vx.at(i);
-          sumy += vy.at(i);
-          sumz += vz.at(i);
-        }
-
-        sumx /= na;
-        sumy /= na;
-        sumz /= na;
-
-        std::vector<double> mx;
-        std::vector<double> my;
-        std::vector<double> mz;
-
-        TMatrixDSym m(3);
-
-        for (std::size_t i = 0; i < na; ++i) {
-          double const xxw1 = vx.at(i);
-          double const yyw1 = vy.at(i);
-          double const zzw1 = vz.at(i);
-
-          mx.push_back(xxw1 - sumx);
-          my.push_back(yyw1 - sumy);
-          mz.push_back(zzw1 - sumz);
-
-          double const xxw0 = mx.at(i);
-          double const yyw0 = my.at(i);
-          double const zzw0 = mz.at(i);
-
-          m(0, 0) += xxw0 * xxw0 / na;
-          m(0, 1) += xxw0 * yyw0 / na;
-          m(0, 2) += xxw0 * zzw0 / na;
-
-          m(1, 0) += yyw0 * xxw0 / na;
-          m(1, 1) += yyw0 * yyw0 / na;
-          m(1, 2) += yyw0 * zzw0 / na;
-
-          m(2, 0) += zzw0 * xxw0 / na;
-          m(2, 1) += zzw0 * yyw0 / na;
-          m(2, 2) += zzw0 * zzw0 / na;
-        }
-
-        TMatrixDSymEigen me(m);
-
-        TVectorD eigenval = me.GetEigenValues();
-        TMatrixD eigenvec = me.GetEigenVectors();
-
-        double max1 = -666.0;
-
-        double ind1 = 0;
-
-        for (int i = 0; i < 3; ++i) {
-          double const p1 = eigenval(i);
-
-          if (p1 > max1) {
-            max1 = p1;
-            ind1 = i;
-          }
-        }
-
-        double ax = eigenvec(0, ind1);
-        double ay = eigenvec(1, ind1);
-        double az = eigenvec(2, ind1);
-
-        if (n_seg > 1) {
-          if (segx.at(n_seg - 1) - segx.at(n_seg - 2) > 0)
-            ax = std::abs(ax);
-          else
-            ax = -1.0 * std::abs(ax);
-
-          if (segy.at(n_seg - 1) - segy.at(n_seg - 2) > 0)
-            ay = std::abs(ay);
-          else
-            ay = -1.0 * std::abs(ay);
-
-          if (segz.at(n_seg - 1) - segz.at(n_seg - 2) > 0)
-            az = std::abs(az);
-          else
-            az = -1.0 * std::abs(az);
-
-          segnx.push_back(ax);
-          segny.push_back(ay);
-          segnz.push_back(az);
-        }
-        else
+        if (n_seg <= 1) // This should never happen
           return std::nullopt;
 
-        ntot = 0;
+        compute_max_fluctuation_vector(segx, segy, segz, segnx, segny, segnz, vx, vy, vz);
 
-        vx.clear();
-        vy.clear();
-        vz.clear();
-
+        ntot = 1;
         vx.push_back(x0);
         vy.push_back(y0);
         vz.push_back(z0);
-
-        ntot++;
       }
       else if (dr1 > seg_size) {
+        // std::cout << "linear sutff step" << endl;
         double const dx = x1 - x0;
         double const dy = y1 - y0;
         double const dz = z1 - z0;
@@ -879,118 +1122,23 @@ namespace trkf {
         y0 = yp;
         z0 = zp;
 
-        i = (i - 1);
+        // i = (i-1); // In this case, we don't move forward as dr1 is beyond the step size
 
         vx.push_back(x0);
         vy.push_back(y0);
         vz.push_back(z0);
 
         ntot++;
-
-        double na = vx.size();
-
-        double sumx = 0.0;
-        double sumy = 0.0;
-        double sumz = 0.0;
-
-        for (std::size_t i = 0; i < na; ++i) {
-          sumx += vx.at(i);
-          sumy += vy.at(i);
-          sumz += vz.at(i);
-        }
-
-        sumx /= na;
-        sumy /= na;
-        sumz /= na;
-
-        std::vector<double> mx;
-        std::vector<double> my;
-        std::vector<double> mz;
-
-        TMatrixDSym m(3);
-
-        for (int i = 0; i < na; ++i) {
-          double const xxw1 = vx.at(i);
-          double const yyw1 = vy.at(i);
-          double const zzw1 = vz.at(i);
-
-          mx.push_back(xxw1 - sumx);
-          my.push_back(yyw1 - sumy);
-          mz.push_back(zzw1 - sumz);
-
-          double const xxw0 = mx.at(i);
-          double const yyw0 = my.at(i);
-          double const zzw0 = mz.at(i);
-
-          m(0, 0) += xxw0 * xxw0 / na;
-          m(0, 1) += xxw0 * yyw0 / na;
-          m(0, 2) += xxw0 * zzw0 / na;
-
-          m(1, 0) += yyw0 * xxw0 / na;
-          m(1, 1) += yyw0 * yyw0 / na;
-          m(1, 2) += yyw0 * zzw0 / na;
-
-          m(2, 0) += zzw0 * xxw0 / na;
-          m(2, 1) += zzw0 * yyw0 / na;
-          m(2, 2) += zzw0 * zzw0 / na;
-        }
-
-        TMatrixDSymEigen me(m);
-
-        TVectorD eigenval = me.GetEigenValues();
-        TMatrixD eigenvec = me.GetEigenVectors();
-
-        double max1 = -666.0;
-        double ind1 = 0;
-
-        for (int i = 0; i < 3; ++i) {
-          double const p1 = eigenval(i);
-
-          if (p1 > max1) {
-            max1 = p1;
-            ind1 = i;
-          }
-        }
-
-        double ax = eigenvec(0, ind1);
-        double ay = eigenvec(1, ind1);
-        double az = eigenvec(2, ind1);
-
-        if (n_seg > 1) {
-          if (segx.at(n_seg - 1) - segx.at(n_seg - 2) > 0)
-            ax = std::abs(ax);
-          else
-            ax = -1.0 * std::abs(ax);
-
-          if (segy.at(n_seg - 1) - segy.at(n_seg - 2) > 0)
-            ay = std::abs(ay);
-          else
-            ay = -1.0 * std::abs(ay);
-
-          if (segz.at(n_seg - 1) - segz.at(n_seg - 2) > 0)
-            az = std::abs(az);
-          else
-            az = -1.0 * std::abs(az);
-
-          segnx.push_back(ax);
-          segny.push_back(ay);
-          segnz.push_back(az);
-        }
-
-        else
+        if (n_seg <= 1) // This should never happen
           return std::nullopt;
 
-        ntot = 0;
+        compute_max_fluctuation_vector(segx, segy, segz, segnx, segny, segnz, vx, vy, vz);
 
-        vx.clear();
-        vy.clear();
-        vz.clear();
-
+        // vectors are cleared in previous step
+        ntot = 1;
         vx.push_back(x0);
         vy.push_back(y0);
         vz.push_back(z0);
-
-        ntot++;
       }
 
       if (n_seg >= (stopper + 1.0) && seg_stop != -1) break;
@@ -1025,7 +1173,9 @@ namespace trkf {
 
     int const tot = a1 - 1;
 
-    double const thick1 = thick + 0.13;
+    double thick1 = thick + 0.13;
+    if (thick==0)
+      thick1 = 0;
 
     std::vector<float> buf0;
 
@@ -1058,7 +1208,7 @@ namespace trkf {
 
       for (int j = i; j < tot; j++) {
         double const L1 = segL.at(j);
-        double const L2 = segL.at(j + 1);
+        double const L2 = segL.at(j+1);
 
         double const dz1 = L1 - refL;
         double const dz2 = L2 - refL;
@@ -1097,6 +1247,9 @@ namespace trkf {
       mean += buf0.at(i);
       nnn++;
     }
+
+    if (nnn<2)
+      return std::make_tuple(-1,-1,-1);
     mean = mean / nnn;
 
     for (int i = 0; i < nmeas; i++)
@@ -1124,6 +1277,9 @@ namespace trkf {
     rms = rms / (ntot1);
     rms = std::sqrt(rms);
     rmse = rms / std::sqrt(2.0 * ntot1);
+    // std::cout << "\n";
+    // std::cout << "trial: " << " " << thick << " ";
+    // std::cout << "n: " << " " << nnn << " \n";
     return std::make_tuple(mean, rms, rmse);
   }
 
@@ -1161,6 +1317,12 @@ namespace trkf {
     else if (vz == 0 && vy < 0) {
       thetayz = 3.0 * TMath::Pi() / 2.0;
     }
+    else if (vz > 0 && vy == 0){
+      thetayz = 0;
+    }
+    else if (vz < 0 && vy == 0){
+      thetayz = TMath::Pi();
+    }
 
     if (thetayz > TMath::Pi()) { thetayz = thetayz - 2.0 * TMath::Pi(); }
 
@@ -1195,32 +1357,37 @@ namespace trkf {
     double theta0x = x1;
 
     double result = 0.0;
-    double nnn1 = dEi.size();
+    double nnn1 = dEi.size(); // number of segments of energy
 
-    double red_length = (10.0) / 14.0;
+    double red_length = (steps_size) / rad_length;
     double addth = 0;
 
     for (int i = 0; i < nnn1; i++) {
-      double Ei = p - dEi.at(i);
-      double Ej = p - dEj.at(i);
+      double Ei = p - dEi.at(i); // Estimated energy at point i
+      double Ej = p - dEj.at(i); // Estimated enery at point j
 
+      // If the momentum p choosen allows that the muon stopped inside, add 1 rad to the change in scatter angle (as the particle stops)
       if (Ei > 0 && Ej < 0) addth = 3.14 * 1000.0;
 
       Ei = std::abs(Ei);
       Ej = std::abs(Ej);
 
+      // Highland formula
+      // Parameters given at Particle Data Group https://pdg.lbl.gov/2023/web/viewer.html?file=../reviews/rpp2022-rev-passage-particles-matter.pdf
       double tH0 =
         (13.6 / std::sqrt(Ei * Ej)) * (1.0 + 0.038 * std::log(red_length)) * std::sqrt(red_length);
+      tH0*=1000;
 
       double rms = -1.0;
 
       if (ind.at(i) == 1) {
-        rms = std::sqrt(tH0 * tH0 + pow(theta0x, 2.0));
+        // Computes the rms of angle
+        rms = std::sqrt(tH0 * tH0 + cet::square(theta0x));
 
         double const DT = dthij.at(i) + addth;
-        double const prob = my_g(DT, 0.0, rms);
+        double const prob = my_g(DT, 0.0, rms); // Computes log likelihood
 
-        result = result - 2.0 * prob;
+        result = result - 2.0 * prob; // Adds for each segment
       }
     }
 
