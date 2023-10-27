@@ -7,7 +7,6 @@
 #include "canvas/Persistency/Common/Ptr.h"
 #include "lardataobj/RecoBase/Track.h"
 
-#include "TTree.h"
 #include "TGraph.h"
 #include "TVector3.h"
 
@@ -48,8 +47,7 @@ namespace trkf {
     */
     double GetMomentumMultiScatterChi2(art::Ptr<recob::Track> const& trk,
                                        const bool checkValidPoints = false,
-                                       const int maxMomentum_MeV = 7500,
-                                       TTree *t1 = nullptr);
+                                       const int maxMomentum_MeV = 7500);
     /**
     * @brief  Calculate muon momentum (MeV) using multiple coulomb scattering by log likelihood
     *
@@ -68,7 +66,6 @@ namespace trkf {
                                        const int maxMomentum_MeV = 7500,
                                        const int MomentumStep_MeV = 10,
                                        const int max_resolution = 0);
-                                       
     double GetMuMultiScatterLLHD3(art::Ptr<recob::Track> const& trk, bool dir);
     TVector3 GetMultiScatterStartingPoint(art::Ptr<recob::Track> const& trk);
 
@@ -140,8 +137,7 @@ namespace trkf {
     * @return tuple with mean value, rms and error of rms
     */
     std::tuple<double, double, double> getDeltaThetaRMS_(Segments const& segments,
-                                                         double thick,
-                                                         std::string type) const;
+                                                         double thick) const;
 
     /**
     * @brief Gets the scatterd angle for all the segments
@@ -159,7 +155,7 @@ namespace trkf {
                          std::vector<double>& th,
                          std::vector<double>& ind,
                          Segments const& segments,
-                         double thick) ;
+                         double thick) const;
 
     /**
     * @brief chi square minizer using Minuit2, it will minize (xx-Q)/s
@@ -238,13 +234,6 @@ namespace trkf {
     TGraph gr_seg_xy{};
     TGraph gr_seg_yz{};
     TGraph gr_seg_xz{};
-
-    double bazx;
-    double bazy;
-    double bacomp;
-    double bseg;
-    double blen;
-    std::vector<std::vector<double>> bvals;
   };
 
 } // namespace trkf

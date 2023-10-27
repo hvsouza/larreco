@@ -5,6 +5,7 @@
 #include "larreco/RecoAlg/TrackMomentumCalculator.h"
 #include "cetlib/pow.h"
 #include "messagefacility/MessageLogger/MessageLogger.h"
+
 #include <array>
 #include <cassert>
 #include <cmath>
@@ -13,8 +14,6 @@
 #include <string>
 #include <tuple>
 
-
-#include "TTree.h"
 #include "Math/Functor.h"
 #include "Math/GenVector/PositionVector3D.h"
 #include "Minuit2/Minuit2Minimizer.h"
@@ -140,7 +139,7 @@ namespace {
 		return (a/(p*p)) + c;
 	}
 
-    double my_mcs_llhd(double const* x)
+    double my_mcs_llhd(double const* x) const
     {
       double result = 0.0;
       constexpr double rad_length{14.0};
@@ -155,6 +154,7 @@ namespace {
       // std::cout << "dEj size: " << dEj_.size() << " ";
       // std::cout << "dthij size: " << dthij_.size() << " ";
       // std::cout << "ind size: " << ind_.size() << "\n";
+      // std::cout << "steps size: " << stepsize_.size() << "\n";
 
       // std::cout << "MININIZE: " << std::endl;
       for (std::size_t i = 0; i < n; ++i) {
@@ -192,7 +192,7 @@ namespace {
 
 		double beta = sqrt( 1 - ((m_muon*m_muon)/(nonrel_pij*nonrel_pij + m_muon*m_muon)) );
 
-		Double_t tH0 = ( MomentumDependentConstant(nonrel_pij) / (nonrel_pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length ) ) * sqrt( red_length );
+		Double_t tH0 = ( MomentumDependentConstant(nonrel_pij) / (nonrel_pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length / cet::square(beta) ) ) * std::sqrt( red_length );
 		// Double_t tH0 = ( MomentumDependentConstant(nonrel_pij) / (nonrel_pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length ) ) * sqrt( red_length );
 
 
@@ -254,7 +254,6 @@ namespace trkf {
                                                    double const stepsize)
     : minLength{min}, maxLength{max}, steps_size{stepsize}
   {
-    bvals.resize(4);
     for (int i = 0; i < n_steps; i++) {
       steps.push_back(steps_size + (i*steps_size)/2.);
     }
@@ -374,7 +373,6 @@ namespace trkf {
                                                               const int max_resolution)
   {
 
-
     if ( !checkValidPoints )
       debug=true;
     std::vector<double> recoX;
@@ -415,14 +413,13 @@ namespace trkf {
 
 
     ROOT::Minuit2::Minuit2Minimizer mP{};
-    FcnWrapperLLHD wrapper{(dEi), (dEj), (dthij), (ind), (seg_size)};
+    FcnWrapperLLHD const wrapper{(dEi), (dEj), (dthij), (ind), (seg_size)};
     ROOT::Math::Functor FCA([&wrapper](double const* xs) { return wrapper.my_mcs_llhd(xs); }, 2);
 
     mP.SetFunction(FCA);
     mP.SetLimitedVariable(0, "p_{MCS}", 0.25, 0.2, 0.001, maxMomentum_MeV / 1.e3);
-    // mP.SetLimitedVariable(1, "#delta#theta", 2.0, 0.2, 0.5, 5.0);
-    mP.SetFixedVariable(1, "#delta#theta", 2.0);
-    // mP.FixVariable(1);
+    mP.SetLimitedVariable(1, "#delta#theta", 2.0, 0.2, 0.5, 5.0);
+    mP.FixVariable(1);
     mP.SetMaxFunctionCalls(1.E9);
     mP.SetMaxIterations(1.E9);
     mP.SetTolerance(0.01);
@@ -453,7 +450,6 @@ namespace trkf {
     double const p_mcs = pars[0];
     double const p_mcs_e [[maybe_unused]] = erpars[0];
     std::cout << pars[1] << std::endl;
-
     return mstatus ? p_mcs : -1.0;
 
     // double logL = 1e+16;
@@ -550,7 +546,7 @@ namespace trkf {
                                                 std::vector<double>& th,
                                                 std::vector<double>& ind,
                                                 Segments const& segments,
-                                                double const thick)
+                                                double const thick) const
   {
     int const a1 = segments.x.size();
     int const a2 = segments.y.size();
@@ -656,7 +652,6 @@ namespace trkf {
           //   std::cerr << "here_dz = " << here_dz << "; dz= " << dz << std::endl;
           // }
 
-
           if (azy <= ULim && azy >= LLim) { // save scatter in the yz plane
 
             if (azx <= ULim && azx >= LLim) { // save scatter in the za plane
@@ -675,7 +670,6 @@ namespace trkf {
             std::cerr << "SOMETHING BAD!!! " << std::endl;  
             std::cerr << scx << " " << scz << " " << azx << std::endl;
           }
-
           // if (azx <= ULim && azx >= LLim) { // save scatter in the za plane
           //   ei.push_back(Li * cL);          // Energy deposited at i
           //   ej.push_back(Lj * cL);          // Energy deposited at j
@@ -703,8 +697,7 @@ namespace trkf {
 
   double TrackMomentumCalculator::GetMomentumMultiScatterChi2(const art::Ptr<recob::Track>& trk,
                                                               const bool checkValidPoints,
-                                                              const int maxMomentum_MeV,
-                                                              TTree *t1)
+                                                              const int maxMomentum_MeV)
   {
     std::vector<double> recoX;
     std::vector<double> recoY;
@@ -740,21 +733,14 @@ namespace trkf {
     std::vector<double> xmeas;
     std::vector<double> ymeas;
     std::vector<double> eymeas;
-    int nmeas = segments->L.size()-1;
-    nmeas = steps.size();
+    int nmeas = steps.size();
     xmeas.reserve(nmeas);
     ymeas.reserve(nmeas);
     eymeas.reserve(nmeas);
     for (int j = 0; j < nmeas; j++) {
       double const trial = steps.at(j);
-      // if (trial > 20*rad_length) break;
-      if (j==n_steps) break;
       
-      // std::cout << "\ntrial: " << trial << endl;
-      // double const trial = steps.at(j);
-      auto const [mean, rms, rmse] = getDeltaThetaRMS_(*segments, trial, "azx");
-      auto const [mean2, rms2, rmse2] = getDeltaThetaRMS_(*segments, trial, "azy");
-      auto const [mean3, rms3, rmse3] = getDeltaThetaRMS_(*segments, trial, "both");
+      auto const [mean, rms, rmse] = getDeltaThetaRMS_(*segments, trial);
 
       if (std::isnan(mean) || std::isinf(mean)) {
         mf::LogDebug("TrackMomentumCalculator") << "Returned mean is either nan or infinity.";
@@ -777,12 +763,6 @@ namespace trkf {
 
       if (ymin > rms) ymin = rms;
       if (ymax < rms) ymax = rms;
-
-      bvals[0].push_back(rms);
-      bvals[1].push_back(rms2);
-      bvals[2].push_back(rms3);
-      bvals[3].push_back(trial);
-
     }
 
     assert(xmeas.size() == ymeas.size());
@@ -829,23 +809,6 @@ namespace trkf {
     double const p_mcs = pars[0] + deltap;
     double const p_mcs_e [[maybe_unused]] = erpars[0];
     std::cout << pars[1] << std::endl;
-
-    t1->SetBranchAddress("azx", &bazx);
-    t1->SetBranchAddress("azy", &bazy);
-    t1->SetBranchAddress("acomp", &bacomp);
-    t1->SetBranchAddress("seg", &bseg);
-    t1->SetBranchAddress("len", &blen);
-
-    // art::FindManyP<recob::PFParticle> fmPFParticle(tracks, event, fTrackLabel);
-    blen = trk->Length();
-    for (size_t i = 0; i < bvals[0].size(); i++){
-      // std::cout << "filling ... " << endl;
-      bazx = bvals[0][i];
-      bazy = bvals[1][i];
-      bacomp = bvals[2][i];
-      bseg = bvals[3][i];
-      t1->Fill();
-    }
     return mstatus ? p_mcs : -1.0;
   }
 
@@ -1287,8 +1250,7 @@ namespace trkf {
 
   std::tuple<double, double, double> TrackMomentumCalculator::getDeltaThetaRMS_(
     Segments const& segments,
-    double const thick,
-    std::string const type) const
+    double const thick) const
   {
     auto const& segnx = segments.nx;
     auto const& segny = segments.ny;
@@ -1361,15 +1323,36 @@ namespace trkf {
           double const azx = find_angle(scz, scx);
           double const azy = find_angle(scz, scy);
 
-          // double const ULim = 10000.0;
-          // double const LLim = -10000.0;
+          double const ULim = 10000.0;
+          double const LLim = -10000.0;
 
-          if(type=="azx")
-              buf0.push_back(azx); 
-          else if(type=="azy")
-              buf0.push_back(azy); 
-          else if(type=="both")
+          // const double mod1 = std::sqrt(cet::sum_of_squares(dx, dy, dz));
+          // const double mod2 = std::sqrt(cet::sum_of_squares(here_dx, here_dy, here_dz));
+          // double innerprod = (here_dx * dx + here_dy * dy + here_dz * dz) / (mod1 * mod2);
+          // const double epsilon = 0.01;
+          // if (std::abs(innerprod) <= 1 + epsilon) // sometimes is not exatly one
+          // {
+
+          //   if(innerprod > 1 && innerprod <= 1 + epsilon)
+          //     innerprod = 1;
+          //   else if(innerprod < -1 && innerprod >= -1 - epsilon)
+          //     innerprod = -1;
+          //   const double relative_theta = std::acos(innerprod)*1000;
+          //   buf0.push_back(relative_theta);
+          // }
+          // else{
+          //   std::cerr << "Not a valid number for acos.. chi2" << std::endl;
+          //   std::cerr << "innerprod = " << innerprod << std::endl;
+          //   std::cerr << "here_dx = " << here_dx << "; dx= " << dx << std::endl;
+          //   std::cerr << "here_dy = " << here_dy << "; dy= " << dy << std::endl;
+          //   std::cerr << "here_dz = " << here_dz << "; dz= " << dz << std::endl;
+          // }
+          if (azx <= ULim && azx >= LLim) 
+          {
+            if (azy <= ULim && azy >= LLim) 
               buf0.push_back(sqrt(azx*azx + azy*azy)); 
+              // buf0.push_back(std::sqrt((azx*azx + azy*azy)/2.));
+          }
 
           break; // of course !
         }
@@ -1404,7 +1387,7 @@ namespace trkf {
     rms = 0.0;
 
     double ntot1 = 0.0;
-    double const lev1 = 5;
+    double const lev1 = 2.5;
 
     for (int i = 0; i < nmeas; i++) {
       double const amp = buf0.at(i);
