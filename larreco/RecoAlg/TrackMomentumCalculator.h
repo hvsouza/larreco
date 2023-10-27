@@ -48,7 +48,8 @@ namespace trkf {
     */
     double GetMomentumMultiScatterChi2(art::Ptr<recob::Track> const& trk,
                                        const bool checkValidPoints = false,
-                                       const int maxMomentum_MeV = 7500);
+                                       const int maxMomentum_MeV = 7500,
+                                       TTree *t1 = nullptr);
     /**
     * @brief  Calculate muon momentum (MeV) using multiple coulomb scattering by log likelihood
     *
@@ -66,8 +67,8 @@ namespace trkf {
                                        const bool checkValidPoints = false,
                                        const int maxMomentum_MeV = 7500,
                                        const int MomentumStep_MeV = 10,
-                                       const int max_resolution = 0,
-                                       TTree *t1 = nullptr);
+                                       const int max_resolution = 0);
+                                       
     double GetMuMultiScatterLLHD3(art::Ptr<recob::Track> const& trk, bool dir);
     TVector3 GetMultiScatterStartingPoint(art::Ptr<recob::Track> const& trk);
 
@@ -139,7 +140,8 @@ namespace trkf {
     * @return tuple with mean value, rms and error of rms
     */
     std::tuple<double, double, double> getDeltaThetaRMS_(Segments const& segments,
-                                                         double thick) const;
+                                                         double thick,
+                                                         std::string type) const;
 
     /**
     * @brief Gets the scatterd angle for all the segments
@@ -208,7 +210,7 @@ namespace trkf {
     */
     double find_angle(double vz, double vy) const;
 
-    int n_steps{9};
+    int n_steps{18};
     std::vector<double> steps;
 
     double minLength;
@@ -239,8 +241,8 @@ namespace trkf {
 
     double bazx;
     double bazy;
-    double bei;
-    double bej;
+    double bacomp;
+    double bseg;
     double blen;
     std::vector<std::vector<double>> bvals;
   };

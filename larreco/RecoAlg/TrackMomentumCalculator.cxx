@@ -255,8 +255,8 @@ namespace trkf {
     : minLength{min}, maxLength{max}, steps_size{stepsize}
   {
     bvals.resize(4);
-    for (int i = 1; i <= n_steps; i++) {
-      steps.push_back(steps_size * i);
+    for (int i = 0; i < n_steps; i++) {
+      steps.push_back(steps_size + (i*steps_size)/2.);
     }
   }
 
@@ -371,8 +371,7 @@ namespace trkf {
                                                               const bool checkValidPoints,
                                                               const int maxMomentum_MeV,
                                                               const int MomentumStep_MeV,
-                                                              const int max_resolution,
-                                                              TTree *t1)
+                                                              const int max_resolution)
   {
 
 
@@ -455,22 +454,6 @@ namespace trkf {
     double const p_mcs_e [[maybe_unused]] = erpars[0];
     std::cout << pars[1] << std::endl;
 
-    t1->SetBranchAddress("azx", &bazx);
-    t1->SetBranchAddress("azy", &bazy);
-    t1->SetBranchAddress("ei", &bei);
-    t1->SetBranchAddress("ej", &bej);
-    t1->SetBranchAddress("len", &blen);
-
-    // art::FindManyP<recob::PFParticle> fmPFParticle(tracks, event, fTrackLabel);
-    blen = trk->Length();
-    for (size_t i = 0; i < bvals[0].size(); i++){
-      // std::cout << "filling ... " << endl;
-      bazx = bvals[0][i];
-      bazy = bvals[1][i];
-      bei = bvals[2][i];
-      bej = bvals[3][i];
-      t1->Fill();
-    }
     return mstatus ? p_mcs : -1.0;
 
     // double logL = 1e+16;
@@ -693,11 +676,6 @@ namespace trkf {
             std::cerr << scx << " " << scz << " " << azx << std::endl;
           }
 
-          bvals[0].push_back(azx);
-          bvals[1].push_back(azy);
-          bvals[2].push_back(Li * cL);
-          bvals[3].push_back(Lj * cL);
-
           // if (azx <= ULim && azx >= LLim) { // save scatter in the za plane
           //   ei.push_back(Li * cL);          // Energy deposited at i
           //   ej.push_back(Lj * cL);          // Energy deposited at j
@@ -725,7 +703,8 @@ namespace trkf {
 
   double TrackMomentumCalculator::GetMomentumMultiScatterChi2(const art::Ptr<recob::Track>& trk,
                                                               const bool checkValidPoints,
-                                                              const int maxMomentum_MeV)
+                                                              const int maxMomentum_MeV,
+                                                              TTree *t1)
   {
     std::vector<double> recoX;
     std::vector<double> recoY;
@@ -762,17 +741,20 @@ namespace trkf {
     std::vector<double> ymeas;
     std::vector<double> eymeas;
     int nmeas = segments->L.size()-1;
+    nmeas = steps.size();
     xmeas.reserve(nmeas);
     ymeas.reserve(nmeas);
     eymeas.reserve(nmeas);
     for (int j = 0; j < nmeas; j++) {
-      double const trial = segments->L.at(j+1) - segments->L.at(0);
+      double const trial = steps.at(j);
       // if (trial > 20*rad_length) break;
       if (j==n_steps) break;
       
       // std::cout << "\ntrial: " << trial << endl;
       // double const trial = steps.at(j);
-      auto const [mean, rms, rmse] = getDeltaThetaRMS_(*segments, trial);
+      auto const [mean, rms, rmse] = getDeltaThetaRMS_(*segments, trial, "azx");
+      auto const [mean2, rms2, rmse2] = getDeltaThetaRMS_(*segments, trial, "azy");
+      auto const [mean3, rms3, rmse3] = getDeltaThetaRMS_(*segments, trial, "both");
 
       if (std::isnan(mean) || std::isinf(mean)) {
         mf::LogDebug("TrackMomentumCalculator") << "Returned mean is either nan or infinity.";
@@ -795,6 +777,12 @@ namespace trkf {
 
       if (ymin > rms) ymin = rms;
       if (ymax < rms) ymax = rms;
+
+      bvals[0].push_back(rms);
+      bvals[1].push_back(rms2);
+      bvals[2].push_back(rms3);
+      bvals[3].push_back(trial);
+
     }
 
     assert(xmeas.size() == ymeas.size());
@@ -841,6 +829,23 @@ namespace trkf {
     double const p_mcs = pars[0] + deltap;
     double const p_mcs_e [[maybe_unused]] = erpars[0];
     std::cout << pars[1] << std::endl;
+
+    t1->SetBranchAddress("azx", &bazx);
+    t1->SetBranchAddress("azy", &bazy);
+    t1->SetBranchAddress("acomp", &bacomp);
+    t1->SetBranchAddress("seg", &bseg);
+    t1->SetBranchAddress("len", &blen);
+
+    // art::FindManyP<recob::PFParticle> fmPFParticle(tracks, event, fTrackLabel);
+    blen = trk->Length();
+    for (size_t i = 0; i < bvals[0].size(); i++){
+      // std::cout << "filling ... " << endl;
+      bazx = bvals[0][i];
+      bazy = bvals[1][i];
+      bacomp = bvals[2][i];
+      bseg = bvals[3][i];
+      t1->Fill();
+    }
     return mstatus ? p_mcs : -1.0;
   }
 
@@ -1282,7 +1287,8 @@ namespace trkf {
 
   std::tuple<double, double, double> TrackMomentumCalculator::getDeltaThetaRMS_(
     Segments const& segments,
-    double const thick) const
+    double const thick,
+    std::string const type) const
   {
     auto const& segnx = segments.nx;
     auto const& segny = segments.ny;
@@ -1355,36 +1361,15 @@ namespace trkf {
           double const azx = find_angle(scz, scx);
           double const azy = find_angle(scz, scy);
 
-          double const ULim = 10000.0;
-          double const LLim = -10000.0;
+          // double const ULim = 10000.0;
+          // double const LLim = -10000.0;
 
-          // const double mod1 = std::sqrt(cet::sum_of_squares(dx, dy, dz));
-          // const double mod2 = std::sqrt(cet::sum_of_squares(here_dx, here_dy, here_dz));
-          // double innerprod = (here_dx * dx + here_dy * dy + here_dz * dz) / (mod1 * mod2);
-          // const double epsilon = 0.01;
-          // if (std::abs(innerprod) <= 1 + epsilon) // sometimes is not exatly one
-          // {
-
-          //   if(innerprod > 1 && innerprod <= 1 + epsilon)
-          //     innerprod = 1;
-          //   else if(innerprod < -1 && innerprod >= -1 - epsilon)
-          //     innerprod = -1;
-          //   const double relative_theta = std::acos(innerprod)*1000;
-          //   buf0.push_back(relative_theta);
-          // }
-          // else{
-          //   std::cerr << "Not a valid number for acos.. chi2" << std::endl;
-          //   std::cerr << "innerprod = " << innerprod << std::endl;
-          //   std::cerr << "here_dx = " << here_dx << "; dx= " << dx << std::endl;
-          //   std::cerr << "here_dy = " << here_dy << "; dy= " << dy << std::endl;
-          //   std::cerr << "here_dz = " << here_dz << "; dz= " << dz << std::endl;
-          // }
-          if (azx <= ULim && azx >= LLim) 
-          {
-            if (azy <= ULim && azy >= LLim) 
+          if(type=="azx")
+              buf0.push_back(azx); 
+          else if(type=="azy")
+              buf0.push_back(azy); 
+          else if(type=="both")
               buf0.push_back(sqrt(azx*azx + azy*azy)); 
-              // buf0.push_back(std::sqrt((azx*azx + azy*azy)/2.));
-          }
 
           break; // of course !
         }
