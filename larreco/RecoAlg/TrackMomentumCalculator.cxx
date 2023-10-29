@@ -5,6 +5,7 @@
 #include "larreco/RecoAlg/TrackMomentumCalculator.h"
 #include "cetlib/pow.h"
 #include "messagefacility/MessageLogger/MessageLogger.h"
+
 #include <array>
 #include <cassert>
 #include <cmath>
@@ -140,11 +141,10 @@ namespace {
 		return (a/(p*p)) + c;
 	}
 
-    double my_mcs_llhd(double const* x)
+    double my_mcs_llhd(double const* x) const
     {
       double result = 0.0;
       constexpr double rad_length{14.0};
-      double addth = 0;
 
       double p = x[0];
       double theta0 = x[1];
@@ -155,45 +155,35 @@ namespace {
       // std::cout << "dEj size: " << dEj_.size() << " ";
       // std::cout << "dthij size: " << dthij_.size() << " ";
       // std::cout << "ind size: " << ind_.size() << "\n";
+      // std::cout << "steps size: " << stepsize_.size() << "\n";
 
       // std::cout << "MININIZE: " << std::endl;
       for (std::size_t i = 0; i < n; ++i) {
-        double Ei = p - dEi_.at(i); // Estimated energy at point i
-        double Ej = p - dEj_.at(i); // Estimated enery at point j
 
         double red_length = stepsize_ / rad_length;
-        // If the momentum p choosen allows that the muon stopped inside, add 1 rad to the change in scatter angle (as the particle stops)
-        // if (Ei > 0 && Ej < 0) 
-        // {
-        //   return 999999999.; // To optimize for escaping muons. 
-        //   addth = 3.14 * 1000.0;
-        // }
-
-        Ei = std::abs(Ei);
-        Ej = std::abs(Ej);
 
 		const double m_muon = 0.1057;
 		// Total initial energy of the muon (converting the input "p" into energy with muon mass)
-		double nonrel_Etot = sqrt(p*p + m_muon*m_muon);
-		// Total energy of the muon including energy lost upstream of this segment (using sqrt avg in segment )
-		double nonrel_Eij = nonrel_Etot - dEi_.at( i );
+		double Etot = sqrt(p*p + m_muon*m_muon);
+		// Total energy of the muon including energy lost upstream of this segment 
+		double Eij = Etot - dEi_.at( i );
 
 
-		if ( nonrel_Eij < m_muon ) {
+		if ( Eij <= m_muon ) {
 		  result = 9999999999.;
-		  // std::cout<<"breaking because nonrel_Eij is less than m_muon. it is "<<nonrel_Eij<<std::endl;
+		  // std::cout<<"breaking because Eij is less than m_muon. it is "<<Eij<<std::endl;
 		  return result;
 		  // addth = 3.14 * 1000.0;
 		}
 
-		// Total momentum of the muon including momentum lost upstream of this segment (converting nonrel_Eij to momentum)
-		double nonrel_pij = sqrt(nonrel_Eij*nonrel_Eij - m_muon*m_muon);
+		// Total momentum of the muon including momentum lost upstream of this segment (converting Eij to momentum)
+		double pij = sqrt(Eij*Eij - m_muon*m_muon);
 
 
-		double beta = sqrt( 1 - ((m_muon*m_muon)/(nonrel_pij*nonrel_pij + m_muon*m_muon)) );
+		double beta = sqrt( 1 - ((m_muon*m_muon)/(pij*pij + m_muon*m_muon)) );
 
-		Double_t tH0 = ( MomentumDependentConstant(nonrel_pij) / (nonrel_pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length ) ) * sqrt( red_length );
-		// Double_t tH0 = ( MomentumDependentConstant(nonrel_pij) / (nonrel_pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length ) ) * sqrt( red_length );
+		Double_t tH0 = ( MomentumDependentConstant(pij) / (pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length / cet::square(beta) ) ) * std::sqrt( red_length );
+		// Double_t tH0 = ( MomentumDependentConstant(pij) / (pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length ) ) * sqrt( red_length );
 
 
         // Highland formula
@@ -206,25 +196,19 @@ namespace {
 
         double prob = 0;
         double DT = 0;
-        if (ind_.at(i) != 0) {
-          // Computes the rms of angle
-          rms = std::sqrt(tH0 * tH0 + cet::square(theta0));
+        // Computes the rms of angle
+        rms = std::sqrt(tH0 * tH0 + cet::square(theta0));
 
-          DT = dthij_.at(i) + addth;
-          if (rms == 0.)
-            std::cerr << " Error : The code tries to divide by zero ! " << std::endl;
-          else{
-            prob = -0.5 * std::log(2.0 * TMath::Pi()) - std::log(rms) - 0.5 * DT * DT / (rms*rms);
-            // std::cout << "\ni: " << i << " ";
-            // std::cout << "ei: " << Ei << " ";
-            // std::cout << "ej: " << Ej << " ";
-            // std::cout << "DT: " << DT << " ";
-            // std::cout << "addth: " << addth << " ";
-            // std::cout << "tH0: " << tH0 << " ";
-            // std::cout << "rms: " << rms << " ";
-            // std::cout << "prob: " << prob << " ";
-          }
-        }
+        DT = dthij_.at(i);
+        prob = -0.5 * std::log(2.0 * TMath::Pi()) - std::log(rms) - 0.5 * DT * DT / (rms*rms);
+        // std::cout << "\ni: " << i << " ";
+        // std::cout << "ei: " << Ei << " ";
+        // std::cout << "ej: " << Ej << " ";
+        // std::cout << "DT: " << DT << " ";
+        // std::cout << "addth: " << addth << " ";
+        // std::cout << "tH0: " << tH0 << " ";
+        // std::cout << "rms: " << rms << " ";
+        // std::cout << "prob: " << prob << " ";
         result = result - 2.0 * prob; // Adds for each segment
         // std::cout << "result: " << result << std::endl;
       }
@@ -415,14 +399,13 @@ namespace trkf {
 
 
     ROOT::Minuit2::Minuit2Minimizer mP{};
-    FcnWrapperLLHD wrapper{(dEi), (dEj), (dthij), (ind), (seg_size)};
+    FcnWrapperLLHD const wrapper{(dEi), (dEj), (dthij), (ind), (seg_size)};
     ROOT::Math::Functor FCA([&wrapper](double const* xs) { return wrapper.my_mcs_llhd(xs); }, 2);
 
     mP.SetFunction(FCA);
     mP.SetLimitedVariable(0, "p_{MCS}", 0.25, 0.2, 0.001, maxMomentum_MeV / 1.e3);
-    // mP.SetLimitedVariable(1, "#delta#theta", 2.0, 0.2, 0.5, 5.0);
-    mP.SetFixedVariable(1, "#delta#theta", 2.0);
-    // mP.FixVariable(1);
+    mP.SetLimitedVariable(1, "#delta#theta", 2.0, 0.2, 0.5, 5.0);
+    mP.FixVariable(1);
     mP.SetMaxFunctionCalls(1.E9);
     mP.SetMaxIterations(1.E9);
     mP.SetTolerance(0.01);
@@ -452,8 +435,7 @@ namespace trkf {
 
     double const p_mcs = pars[0];
     double const p_mcs_e [[maybe_unused]] = erpars[0];
-    std::cout << pars[1] << std::endl;
-
+    // std::cout << pars[1] << std::endl;
     return mstatus ? p_mcs : -1.0;
 
     // double logL = 1e+16;
@@ -656,7 +638,6 @@ namespace trkf {
           //   std::cerr << "here_dz = " << here_dz << "; dz= " << dz << std::endl;
           // }
 
-
           if (azy <= ULim && azy >= LLim) { // save scatter in the yz plane
 
             if (azx <= ULim && azx >= LLim) { // save scatter in the za plane
@@ -675,7 +656,6 @@ namespace trkf {
             std::cerr << "SOMETHING BAD!!! " << std::endl;  
             std::cerr << scx << " " << scz << " " << azx << std::endl;
           }
-
           // if (azx <= ULim && azx >= LLim) { // save scatter in the za plane
           //   ei.push_back(Li * cL);          // Energy deposited at i
           //   ej.push_back(Lj * cL);          // Energy deposited at j
@@ -846,6 +826,7 @@ namespace trkf {
       bseg = bvals[3][i];
       t1->Fill();
     }
+    // std::cout << pars[1] << std::endl;
     return mstatus ? p_mcs : -1.0;
   }
 
@@ -1404,7 +1385,7 @@ namespace trkf {
     rms = 0.0;
 
     double ntot1 = 0.0;
-    double const lev1 = 5;
+    double const lev1 = 2.5;
 
     for (int i = 0; i < nmeas; i++) {
       double const amp = buf0.at(i);
