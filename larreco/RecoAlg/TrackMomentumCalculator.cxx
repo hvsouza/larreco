@@ -143,7 +143,6 @@ namespace {
     {
       double result = 0.0;
       constexpr double rad_length{14.0};
-      double addth = 0;
 
       double p = x[0];
       double theta0 = x[1];
@@ -158,42 +157,31 @@ namespace {
 
       // std::cout << "MININIZE: " << std::endl;
       for (std::size_t i = 0; i < n; ++i) {
-        double Ei = p - dEi_.at(i); // Estimated energy at point i
-        double Ej = p - dEj_.at(i); // Estimated enery at point j
 
         double red_length = stepsize_ / rad_length;
-        // If the momentum p choosen allows that the muon stopped inside, add 1 rad to the change in scatter angle (as the particle stops)
-        // if (Ei > 0 && Ej < 0) 
-        // {
-        //   return 999999999.; // To optimize for escaping muons. 
-        //   addth = 3.14 * 1000.0;
-        // }
-
-        Ei = std::abs(Ei);
-        Ej = std::abs(Ej);
 
 		const double m_muon = 0.1057;
 		// Total initial energy of the muon (converting the input "p" into energy with muon mass)
-		double nonrel_Etot = sqrt(p*p + m_muon*m_muon);
-		// Total energy of the muon including energy lost upstream of this segment (using sqrt avg in segment )
-		double nonrel_Eij = nonrel_Etot - dEi_.at( i );
+		double Etot = sqrt(p*p + m_muon*m_muon);
+		// Total energy of the muon including energy lost upstream of this segment 
+		double Eij = Etot - dEi_.at( i );
 
 
-		if ( nonrel_Eij < m_muon ) {
+		if ( Eij <= m_muon ) {
 		  result = 9999999999.;
-		  // std::cout<<"breaking because nonrel_Eij is less than m_muon. it is "<<nonrel_Eij<<std::endl;
+		  // std::cout<<"breaking because Eij is less than m_muon. it is "<<Eij<<std::endl;
 		  return result;
 		  // addth = 3.14 * 1000.0;
 		}
 
-		// Total momentum of the muon including momentum lost upstream of this segment (converting nonrel_Eij to momentum)
-		double nonrel_pij = sqrt(nonrel_Eij*nonrel_Eij - m_muon*m_muon);
+		// Total momentum of the muon including momentum lost upstream of this segment (converting Eij to momentum)
+		double pij = sqrt(Eij*Eij - m_muon*m_muon);
 
 
-		double beta = sqrt( 1 - ((m_muon*m_muon)/(nonrel_pij*nonrel_pij + m_muon*m_muon)) );
+		double beta = sqrt( 1 - ((m_muon*m_muon)/(pij*pij + m_muon*m_muon)) );
 
-		Double_t tH0 = ( MomentumDependentConstant(nonrel_pij) / (nonrel_pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length / cet::square(beta) ) ) * std::sqrt( red_length );
-		// Double_t tH0 = ( MomentumDependentConstant(nonrel_pij) / (nonrel_pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length ) ) * sqrt( red_length );
+		Double_t tH0 = ( MomentumDependentConstant(pij) / (pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length / cet::square(beta) ) ) * std::sqrt( red_length );
+		// Double_t tH0 = ( MomentumDependentConstant(pij) / (pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length ) ) * sqrt( red_length );
 
 
         // Highland formula
@@ -206,25 +194,19 @@ namespace {
 
         double prob = 0;
         double DT = 0;
-        if (ind_.at(i) != 0) {
-          // Computes the rms of angle
-          rms = std::sqrt(tH0 * tH0 + cet::square(theta0));
+        // Computes the rms of angle
+        rms = std::sqrt(tH0 * tH0 + cet::square(theta0));
 
-          DT = dthij_.at(i) + addth;
-          if (rms == 0.)
-            std::cerr << " Error : The code tries to divide by zero ! " << std::endl;
-          else{
-            prob = -0.5 * std::log(2.0 * TMath::Pi()) - std::log(rms) - 0.5 * DT * DT / (rms*rms);
-            // std::cout << "\ni: " << i << " ";
-            // std::cout << "ei: " << Ei << " ";
-            // std::cout << "ej: " << Ej << " ";
-            // std::cout << "DT: " << DT << " ";
-            // std::cout << "addth: " << addth << " ";
-            // std::cout << "tH0: " << tH0 << " ";
-            // std::cout << "rms: " << rms << " ";
-            // std::cout << "prob: " << prob << " ";
-          }
-        }
+        DT = dthij_.at(i);
+        prob = -0.5 * std::log(2.0 * TMath::Pi()) - std::log(rms) - 0.5 * DT * DT / (rms*rms);
+        // std::cout << "\ni: " << i << " ";
+        // std::cout << "ei: " << Ei << " ";
+        // std::cout << "ej: " << Ej << " ";
+        // std::cout << "DT: " << DT << " ";
+        // std::cout << "addth: " << addth << " ";
+        // std::cout << "tH0: " << tH0 << " ";
+        // std::cout << "rms: " << rms << " ";
+        // std::cout << "prob: " << prob << " ";
         result = result - 2.0 * prob; // Adds for each segment
         // std::cout << "result: " << result << std::endl;
       }
@@ -255,7 +237,7 @@ namespace trkf {
     : minLength{min}, maxLength{max}, steps_size{stepsize}
   {
     for (int i = 0; i < n_steps; i++) {
-      steps.push_back(steps_size + (i*steps_size)/2.);
+      steps.push_back(steps_size+steps_size/2. + (i*steps_size));
     }
   }
 
@@ -449,7 +431,7 @@ namespace trkf {
 
     double const p_mcs = pars[0];
     double const p_mcs_e [[maybe_unused]] = erpars[0];
-    std::cout << pars[1] << std::endl;
+    // std::cout << pars[1] << std::endl;
     return mstatus ? p_mcs : -1.0;
 
     // double logL = 1e+16;
@@ -808,7 +790,7 @@ namespace trkf {
 
     double const p_mcs = pars[0] + deltap;
     double const p_mcs_e [[maybe_unused]] = erpars[0];
-    std::cout << pars[1] << std::endl;
+    // std::cout << pars[1] << std::endl;
     return mstatus ? p_mcs : -1.0;
   }
 
@@ -1350,7 +1332,7 @@ namespace trkf {
           if (azx <= ULim && azx >= LLim) 
           {
             if (azy <= ULim && azy >= LLim) 
-              buf0.push_back(sqrt(azx*azx + azy*azy)); 
+              buf0.push_back(cet::sum_of_squares(azx,azy)); 
               // buf0.push_back(std::sqrt((azx*azx + azy*azy)/2.));
           }
 
