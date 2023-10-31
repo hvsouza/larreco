@@ -240,7 +240,7 @@ namespace trkf {
   {
     bvals.resize(4);
     for (int i = 0; i < n_steps; i++) {
-      steps.push_back(steps_size + steps_size/2. + (i*steps_size));
+      steps.push_back(steps_size*2 +  (i*steps_size));
     }
   }
 
