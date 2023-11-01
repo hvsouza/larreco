@@ -179,12 +179,12 @@ namespace {
 		double nonrel_Eij = nonrel_Etot - dEi_.at( i );
 
 
-		if ( nonrel_Eij < m_muon ) {
-		  result = 9999999999.;
-		  // std::cout<<"breaking because nonrel_Eij is less than m_muon. it is "<<nonrel_Eij<<std::endl;
-		  return result;
-		  // addth = 3.14 * 1000.0;
-		}
+		// if ( nonrel_Eij < m_muon ) {
+		//   result = 9999999999.;
+		//   // std::cout<<"breaking because nonrel_Eij is less than m_muon. it is "<<nonrel_Eij<<std::endl;
+		//   return result;
+		//   // addth = 3.14 * 1000.0;
+		// }
 
 		// Total momentum of the muon including momentum lost upstream of this segment (converting nonrel_Eij to momentum)
 		double nonrel_pij = sqrt(nonrel_Eij*nonrel_Eij - m_muon*m_muon);
@@ -192,7 +192,7 @@ namespace {
 
 		double beta = sqrt( 1 - ((m_muon*m_muon)/(nonrel_pij*nonrel_pij + m_muon*m_muon)) );
 
-		Double_t tH0 = ( MomentumDependentConstant(nonrel_pij) / (nonrel_pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length ) ) * sqrt( red_length );
+		Double_t tH0 = ( MomentumDependentConstant(nonrel_pij) / (nonrel_pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length / cet::square(beta) ) ) * sqrt( red_length );
 		// Double_t tH0 = ( MomentumDependentConstant(nonrel_pij) / (nonrel_pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length ) ) * sqrt( red_length );
 
 
@@ -403,7 +403,7 @@ namespace trkf {
     if (!segments.has_value()) return -1.0;
 
     auto const seg_steps = segments->x.size();
-    if (seg_steps < 2) return -1;
+    if (seg_steps <= 2) return -1;
 
     double const recoL = segments->L.at(seg_steps - 1);
     if (recoL < minLength || recoL > maxLength) return -1;
@@ -420,7 +420,9 @@ namespace trkf {
     ROOT::Math::Functor FCA([&wrapper](double const* xs) { return wrapper.my_mcs_llhd(xs); }, 2);
 
     mP.SetFunction(FCA);
-    mP.SetLimitedVariable(0, "p_{MCS}", 0.25, 0.2, 0.001, maxMomentum_MeV / 1.e3);
+    double const totaldEi = dEi.back();
+    double minP = std::sqrt(totaldEi*(2*0.1056+totaldEi)) + 0.001;
+    mP.SetLimitedVariable(0, "p_{MCS}", minP*2, minP, 0.001, maxMomentum_MeV / 1.e3);
     // mP.SetLimitedVariable(1, "#delta#theta", 2.0, 0.2, 0.5, 5.0);
     mP.SetFixedVariable(1, "#delta#theta", 2.0);
     // mP.FixVariable(1);
