@@ -403,7 +403,7 @@ namespace trkf {
     if (!segments.has_value()) return -1.0;
 
     auto const seg_steps = segments->x.size();
-    if (seg_steps <= 2) return -1;
+    if (seg_steps < 2) return -1;
 
     double const recoL = segments->L.at(seg_steps - 1);
     if (recoL < minLength || recoL > maxLength) return -1;
@@ -413,6 +413,9 @@ namespace trkf {
     std::vector<double> dthij;
     std::vector<double> ind;
     if (getDeltaThetaij_(dEi, dEj, dthij, ind, *segments, seg_size) != 0) return -1.0;
+
+    auto const ndEi = dEi.size();
+    if (ndEi < 1) return -1;
 
 
     ROOT::Minuit2::Minuit2Minimizer mP{};
