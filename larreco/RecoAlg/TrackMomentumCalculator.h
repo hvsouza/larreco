@@ -242,6 +242,9 @@ namespace trkf {
     double bazx;
     double bazy;
     double bacomp;
+    double erbazx;
+    double erbazy;
+    double erbacomp;
     double bseg;
     double blen;
     std::vector<std::vector<double>> bvals;

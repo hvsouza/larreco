@@ -238,7 +238,7 @@ namespace trkf {
                                                    double const stepsize)
     : minLength{min}, maxLength{max}, steps_size{stepsize}
   {
-    bvals.resize(4);
+    bvals.resize(7);
     for (int i = 0; i < n_steps; i++) {
       steps.push_back(steps_size*2 +  (i*steps_size));
     }
@@ -761,7 +761,10 @@ namespace trkf {
       bvals[0].push_back(rms);
       bvals[1].push_back(rms2);
       bvals[2].push_back(rms3);
-      bvals[3].push_back(trial);
+      bvals[3].push_back(rmse);
+      bvals[4].push_back(rmse2);
+      bvals[5].push_back(rmse3);
+      bvals[6].push_back(trial);
 
     }
 
@@ -813,6 +816,9 @@ namespace trkf {
     t1->SetBranchAddress("azx", &bazx);
     t1->SetBranchAddress("azy", &bazy);
     t1->SetBranchAddress("acomp", &bacomp);
+    t1->SetBranchAddress("erazx", &erbazx);
+    t1->SetBranchAddress("erazy", &erbazy);
+    t1->SetBranchAddress("eracomp", &erbacomp);
     t1->SetBranchAddress("seg", &bseg);
     t1->SetBranchAddress("len", &blen);
 
@@ -823,7 +829,10 @@ namespace trkf {
       bazx = bvals[0][i];
       bazy = bvals[1][i];
       bacomp = bvals[2][i];
-      bseg = bvals[3][i];
+      erbazx = bvals[3][i];
+      erbazy = bvals[4][i];
+      erbacomp = bvals[5][i];
+      bseg = bvals[6][i];
       t1->Fill();
     }
     // std::cout << pars[1] << std::endl;
