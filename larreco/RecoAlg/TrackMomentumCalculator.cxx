@@ -73,6 +73,13 @@ namespace {
       : xmeas_{xmeas}, ymeas_{ymeas}, eymeas_{eymeas}
     {}
 
+	double MomentumDependentConstant(const double p) const
+    {
+		double a = 0.1049;
+		double c = 11.0038;
+		return (a/(p*p)) + c;
+	}
+
     double my_mcs_chi2(double const* x) const
     {
       double result = 0.0;
@@ -83,6 +90,8 @@ namespace {
       auto const n = xmeas_.size();
       assert(n == ymeas_.size());
       assert(n == eymeas_.size());
+
+      // const double m_muon = 0.1057;
 
       for (std::size_t i = 0; i < n; ++i) {
         double const xx = xmeas_[i];
@@ -100,6 +109,8 @@ namespace {
         // Highland formula
         // Parameters given at Particle Data Group https://pdg.lbl.gov/2023/web/viewer.html?file=../reviews/rpp2022-rev-passage-particles-matter.pdf
         if (xx > 0 && p > 0) res1 = (13.6 / p) * std::sqrt(l0) * (1.0 + 0.038 * std::log(l0));
+		// double beta = sqrt( 1 - ((m_muon*m_muon)/(p*p + m_muon*m_muon)) );
+		// if (xx > 0 && p > 0) res1 = ( MomentumDependentConstant(p) / (p*beta) ) * ( 1.0 + 0.038 * TMath::Log( l0 / cet::square(beta) ) ) * std::sqrt( l0 );
 
         res1 = std::sqrt(res1 * res1 + theta0 * theta0);
 
@@ -238,7 +249,7 @@ namespace trkf {
                                                    double const stepsize)
     : minLength{min}, maxLength{max}, steps_size{stepsize}
   {
-    bvals.resize(7);
+    bvals.resize(8);
     for (int i = 0; i < n_steps; i++) {
       steps.push_back(steps_size*2 +  (i*steps_size));
     }
@@ -765,6 +776,7 @@ namespace trkf {
       bvals[4].push_back(rmse2);
       bvals[5].push_back(rmse3);
       bvals[6].push_back(trial);
+      bvals[7].push_back(recoL);
 
     }
 
@@ -821,6 +833,7 @@ namespace trkf {
     t1->SetBranchAddress("eracomp", &erbacomp);
     t1->SetBranchAddress("seg", &bseg);
     t1->SetBranchAddress("len", &blen);
+    t1->SetBranchAddress("recolen", &brecoL);
 
     // art::FindManyP<recob::PFParticle> fmPFParticle(tracks, event, fTrackLabel);
     blen = trk->Length();
@@ -833,6 +846,7 @@ namespace trkf {
       erbazy = bvals[4][i];
       erbacomp = bvals[5][i];
       bseg = bvals[6][i];
+      brecoL = bvals[7][i];
       t1->Fill();
     }
     // std::cout << pars[1] << std::endl;

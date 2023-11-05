@@ -247,6 +247,7 @@ namespace trkf {
     double erbacomp;
     double bseg;
     double blen;
+    double brecoL;
     std::vector<std::vector<double>> bvals;
   };
 
