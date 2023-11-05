@@ -433,7 +433,7 @@ namespace trkf {
     mP.SetMaxIterations(1.E9);
     mP.SetTolerance(0.01);
     mP.SetStrategy(2);
-    mP.SetErrorDef(1.0);
+    mP.SetErrorDef(0.5);
 
     // unsigned int mysteps = 1000;
     // double *xs = new double[mysteps];
