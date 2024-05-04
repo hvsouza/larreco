@@ -71,6 +71,13 @@ namespace {
       : xmeas_{xmeas}, ymeas_{ymeas}, eymeas_{eymeas}
     {}
 
+	double MomentumDependentConstant(const double p) const
+    {
+		double a = 0.1049;
+		double c = 11.0038;
+		return (a/(p*p)) + c;
+	}
+
     double my_mcs_chi2(double const* x) const
     {
       double result = 0.0;
@@ -149,13 +156,6 @@ namespace {
 
       auto const n = dEi_.size(); // number of segments of energy
 
-      // std::cout << "\ndEi size: " << dEi_.size() << " ";
-      // std::cout << "dEj size: " << dEj_.size() << " ";
-      // std::cout << "dthij size: " << dthij_.size() << " ";
-      // std::cout << "ind size: " << ind_.size() << "\n";
-      // std::cout << "steps size: " << stepsize_.size() << "\n";
-
-      // std::cout << "MININIZE: " << std::endl;
       for (std::size_t i = 0; i < n; ++i) {
 
         double red_length = stepsize_ / rad_length;
@@ -166,28 +166,15 @@ namespace {
 		// Total energy of the muon including energy lost upstream of this segment 
 		double Eij = Etot - dEi_.at( i );
 
-
-		if ( Eij <= m_muon ) {
-		  result = 9999999999.;
-		  // std::cout<<"breaking because Eij is less than m_muon. it is "<<Eij<<std::endl;
-		  return result;
-		  // addth = 3.14 * 1000.0;
-		}
-
 		// Total momentum of the muon including momentum lost upstream of this segment (converting Eij to momentum)
 		double pij = sqrt(Eij*Eij - m_muon*m_muon);
 
 
 		double beta = sqrt( 1 - ((m_muon*m_muon)/(pij*pij + m_muon*m_muon)) );
 
-		Double_t tH0 = ( MomentumDependentConstant(pij) / (pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length / cet::square(beta) ) ) * std::sqrt( red_length );
-		// Double_t tH0 = ( MomentumDependentConstant(pij) / (pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length ) ) * sqrt( red_length );
-
-
         // Highland formula
         // Parameters given at Particle Data Group https://pdg.lbl.gov/2023/web/viewer.html?file=../reviews/rpp2022-rev-passage-particles-matter.pdf
-        // double tH0 =
-        //   (13.6 / std::sqrt(Ei * Ej)) * (1.0 + 0.038 * std::log(red_length)) * std::sqrt(red_length);
+		Double_t tH0 = ( MomentumDependentConstant(pij) / (pij*beta) ) * ( 1.0 + 0.038 * TMath::Log( red_length / cet::square( beta ) ) ) * std::sqrt( red_length );
 
 
         double rms = -1.0;
@@ -199,14 +186,6 @@ namespace {
 
         DT = dthij_.at(i);
         prob = -0.5 * std::log(2.0 * TMath::Pi()) - std::log(rms) - 0.5 * DT * DT / (rms*rms);
-        // std::cout << "\ni: " << i << " ";
-        // std::cout << "ei: " << Ei << " ";
-        // std::cout << "ej: " << Ej << " ";
-        // std::cout << "DT: " << DT << " ";
-        // std::cout << "addth: " << addth << " ";
-        // std::cout << "tH0: " << tH0 << " ";
-        // std::cout << "rms: " << rms << " ";
-        // std::cout << "prob: " << prob << " ";
         result = result - 2.0 * prob; // Adds for each segment
         // std::cout << "result: " << result << std::endl;
       }
@@ -237,7 +216,7 @@ namespace trkf {
     : minLength{min}, maxLength{max}, steps_size{stepsize}
   {
     for (int i = 0; i < n_steps; i++) {
-      steps.push_back(steps_size + steps_size/2. + (i*steps_size));
+      steps.push_back(steps_size*2 +  (i*steps_size));
     }
   }
 
@@ -393,33 +372,25 @@ namespace trkf {
     std::vector<double> ind;
     if (getDeltaThetaij_(dEi, dEj, dthij, ind, *segments, seg_size) != 0) return -1.0;
 
+    auto const ndEi = dEi.size();
+    if (ndEi < 1) return -1;
 
     ROOT::Minuit2::Minuit2Minimizer mP{};
     FcnWrapperLLHD const wrapper{(dEi), (dEj), (dthij), (ind), (seg_size)};
     ROOT::Math::Functor FCA([&wrapper](double const* xs) { return wrapper.my_mcs_llhd(xs); }, 2);
 
     mP.SetFunction(FCA);
-    mP.SetLimitedVariable(0, "p_{MCS}", 0.25, 0.2, 0.001, maxMomentum_MeV / 1.e3);
+    double const totaldEi = dEi.back();
+    double minP = std::sqrt(totaldEi*(2*0.1056+totaldEi)) + 0.001;
+    mP.SetLimitedVariable(0, "p_{MCS}", minP*2, minP, 0.001, maxMomentum_MeV / 1.e3);
     mP.SetLimitedVariable(1, "#delta#theta", 2.0, 0.2, 0.5, 5.0);
     mP.FixVariable(1);
     mP.SetMaxFunctionCalls(1.E9);
     mP.SetMaxIterations(1.E9);
-    mP.SetTolerance(0.01);
+    mP.SetTolerance(1);
     mP.SetStrategy(2);
-    mP.SetErrorDef(1.0);
+    mP.SetErrorDef(0.5);
 
-    // unsigned int mysteps = 1000;
-    // double *xs = new double[mysteps];
-    // double *ys = new double[mysteps];
-    // mP.Scan(0, mysteps, xs, ys, 0.13, 1);
-
-    // std::cout << "\n";
-    // for (unsigned int j = 0; j < mysteps; j++){
-    //   std::cout << xs[j] << " " << ys[j] << endl;;
-    // }
-    // std::cout << "\n";
-    // delete xs;
-    // delete ys;
 
     bool const mstatus = mP.Minimize();
 
@@ -431,37 +402,8 @@ namespace trkf {
 
     double const p_mcs = pars[0];
     double const p_mcs_e [[maybe_unused]] = erpars[0];
-    // std::cout << pars[1] << std::endl;
     return mstatus ? p_mcs : -1.0;
 
-    // double logL = 1e+16;
-    // double bf = -666.0; // double errs = -666.0;
-
-    // int const start1{};
-    // int const end1{static_cast<int>(maxMomentum_MeV / MomentumStep_MeV)};
-    // int const start2{};
-    // int const end2{max_resolution}; // 800.0;
-
-    // double *tmp = new double[2];
-    // for (int k = start1; k <= end1; ++k) {
-    //   double const p_test = 0.001 + k * 0.01;
-
-    //   for (int l = start2; l <= end2; ++l) {
-    //     double const res_test = (start2 == end2) ? 2.0 : 0.001 + l * 1.0; // 0.001+l*1.0;
-    //     tmp[0] = p_test;
-    //     tmp[1] = res_test;
-    //     double const fv = my_mcs_llhd(dEi, dEj, dthij, ind, p_test, res_test);
-    //     // double const fv = wrapper.my_mcs_llhd(tmp);
-
-    //     if (fv < logL) {
-    //       bf = tmp[0];
-    //       logL = fv;
-    //       // errs = res_test;
-    //     }
-    //   }
-    // }
-    // delete tmp;
-    // return bf;
   }
 
   TVector3 TrackMomentumCalculator::GetMultiScatterStartingPoint(const art::Ptr<recob::Track>& trk)
@@ -608,66 +550,19 @@ namespace trkf {
           double const Li = segL.at(i);
           double const Lj = segL.at(j);
 
-          // const double mod1 = std::sqrt(cet::sum_of_squares(dx, dy, dz));
-          // const double mod2 = std::sqrt(cet::sum_of_squares(here_dx, here_dy, here_dz));
-          // double innerprod = (here_dx * dx + here_dy * dy + here_dz * dz) / (mod1 * mod2);
-          // const double epsilon = 0.01;
-          // if (std::abs(innerprod) <= 1 + epsilon) // sometimes is not exatly one
-          // {
 
-          //   if(innerprod > 1 && innerprod <= 1 + epsilon)
-          //     innerprod = 1;
-          //   else if(innerprod < -1 && innerprod >= -1 - epsilon)
-          //     innerprod = -1;
-          //   const double relative_theta = std::acos(innerprod)*1000;
+          if (azy <= ULim && azy >= LLim) { // safe scatter in the yz plane
 
-          //   ei.push_back(Li * cL);
-          //   ej.push_back(Lj * cL);
-          //   th.push_back(relative_theta);
-          //   ind.push_back(1);
-          // }
-          // else{
-          //   std::cerr << "Not a valid number for acos.. " << std::endl;
-          //   std::cerr << "innerprod = " << innerprod << std::endl;
-          //   std::cerr << "here_dx = " << here_dx << "; dx= " << dx << std::endl;
-          //   std::cerr << "here_dy = " << here_dy << "; dy= " << dy << std::endl;
-          //   std::cerr << "here_dz = " << here_dz << "; dz= " << dz << std::endl;
-          // }
-
-          if (azy <= ULim && azy >= LLim) { // save scatter in the yz plane
-
-            if (azx <= ULim && azx >= LLim) { // save scatter in the za plane
-              ei.push_back(Li * cL);
-              ej.push_back(Lj * cL);
-              th.push_back(std::sqrt(azx*azx + azy*azy));
-              // th.push_back(azx);
-              ind.push_back(1);
-              // ei.push_back(Li * cL);          // Energy deposited at i
-              // ej.push_back(Lj * cL);          // Energy deposited at j
-              // th.push_back(azy);              // scattered angle
-              // ind.push_back(2);
+            if (azx <= ULim && azx >= LLim) { // safe scatter in the za plane
+              ei.push_back(Li * cL); // Energy deposited at i
+              ej.push_back(Lj * cL); // Energy deposited at j
+              th.push_back(std::sqrt(azx*azx + azy*azy)); // scattered angle
               }
           }
           else{
             std::cerr << "SOMETHING BAD!!! " << std::endl;  
             std::cerr << scx << " " << scz << " " << azx << std::endl;
           }
-          // if (azx <= ULim && azx >= LLim) { // save scatter in the za plane
-          //   ei.push_back(Li * cL);          // Energy deposited at i
-          //   ej.push_back(Lj * cL);          // Energy deposited at j
-          //   th.push_back(azy);              // scattered angle
-          //   ind.push_back(2);
-
-          //   // std::cout << "\ni: " << i << " ";
-          //   // std::cout << "j: " << j << " ";
-          //   // std::cout << "ei: " << Li * cL << " ";
-          //   // std::cout << "ej: " << Lj * cL << " ";
-          //   // std::cout << "azx: " << azx << " \n";
-          // }
-          // else{
-          //   std::cerr << "SOMETHING BAD!!! " << std::endl;  
-          //   std::cerr << scx << " " << scz << " " << azx << std::endl;
-          // }
 
           break; // of course !
         }
@@ -775,7 +670,7 @@ namespace trkf {
     mP.FixVariable(1);
     mP.SetMaxFunctionCalls(1.E9);
     mP.SetMaxIterations(1.E9);
-    mP.SetTolerance(0.01);
+    mP.SetTolerance(1);
     mP.SetStrategy(2);
     mP.SetErrorDef(1.0);
 
@@ -1299,42 +1194,14 @@ namespace trkf {
           TVector3 const rot_here{Rx.Dot(here_vec), Ry.Dot(here_vec), Rz.Dot(here_vec)};
 
           double const scx = rot_here.X();
-          double const scy = rot_here.Y();
+          // double const scy = rot_here.Y();
           double const scz = rot_here.Z();
 
           double const azx = find_angle(scz, scx);
-          double const azy = find_angle(scz, scy);
+          // double const azy = find_angle(scz, scy);
 
-          double const ULim = 10000.0;
-          double const LLim = -10000.0;
-
-          // const double mod1 = std::sqrt(cet::sum_of_squares(dx, dy, dz));
-          // const double mod2 = std::sqrt(cet::sum_of_squares(here_dx, here_dy, here_dz));
-          // double innerprod = (here_dx * dx + here_dy * dy + here_dz * dz) / (mod1 * mod2);
-          // const double epsilon = 0.01;
-          // if (std::abs(innerprod) <= 1 + epsilon) // sometimes is not exatly one
-          // {
-
-          //   if(innerprod > 1 && innerprod <= 1 + epsilon)
-          //     innerprod = 1;
-          //   else if(innerprod < -1 && innerprod >= -1 - epsilon)
-          //     innerprod = -1;
-          //   const double relative_theta = std::acos(innerprod)*1000;
-          //   buf0.push_back(relative_theta);
-          // }
-          // else{
-          //   std::cerr << "Not a valid number for acos.. chi2" << std::endl;
-          //   std::cerr << "innerprod = " << innerprod << std::endl;
-          //   std::cerr << "here_dx = " << here_dx << "; dx= " << dx << std::endl;
-          //   std::cerr << "here_dy = " << here_dy << "; dy= " << dy << std::endl;
-          //   std::cerr << "here_dz = " << here_dz << "; dz= " << dz << std::endl;
-          // }
-          if (azx <= ULim && azx >= LLim) 
-          {
-            if (azy <= ULim && azy >= LLim) 
-              buf0.push_back(cet::sum_of_squares(azx,azy)); 
-              // buf0.push_back(std::sqrt((azx*azx + azy*azy)/2.));
-          }
+          // buf0.push_back(cet::sum_of_squares(azx,azy)); 
+          buf0.push_back(azx); 
 
           break; // of course !
         }
