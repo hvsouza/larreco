@@ -8,6 +8,7 @@
 #include "canvas/Persistency/Common/Ptr.h"
 #include "lardataobj/RecoBase/Track.h"
 
+#include "TTree.h"
 #include "TGraph.h"
 #include "TVector3.h"
 
@@ -72,7 +73,8 @@ namespace trkf {
                                        const bool checkValidPoints = false,
                                        const int maxMomentum_MeV = 7500,
                                        const double min_resolution = 0.001,
-                                       const double max_resolution = 800);
+                                       const double max_resolution = 800,
+                                       TTree *t1 = nullptr);
     double GetMuMultiScatterLLHD3(art::Ptr<recob::Track> const& trk, bool dir);
     TVector3 GetMultiScatterStartingPoint(art::Ptr<recob::Track> const& trk);
 
@@ -160,7 +162,7 @@ namespace trkf {
                          std::vector<double>& th,
                          std::vector<double>& ind,
                          Segments const& segments,
-                         double thick) const;
+                         double thick);
 
     /**
     * @brief chi square minizer using Minuit2, it will minize (xx-Q)/s
@@ -247,6 +249,13 @@ namespace trkf {
     };
     
     ScatterAngleMethods fMCSAngleMethod;
+
+    double bazx;
+    double bazy;
+    double bei;
+    double bej;
+    double blen;
+    std::vector<std::vector<double>> bvals;
 
   };
 

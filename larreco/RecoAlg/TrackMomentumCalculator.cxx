@@ -19,6 +19,8 @@
 #include <string>
 #include <tuple>
 
+
+#include "TTree.h"
 #include "Math/Functor.h"
 #include "Math/GenVector/PositionVector3D.h"
 #include "Minuit2/Minuit2Minimizer.h"
@@ -288,6 +290,7 @@ namespace trkf {
                                                    int const nsteps)
     : minLength{min}, maxLength{max}, steps_size{stepsize}, fMCSAngleMethod{static_cast<ScatterAngleMethods>(angleMethod)}
   {
+    bvals.resize(4);
     n_steps = nsteps;
     for (int i = 1; i <= n_steps; i++) {
       steps.push_back(steps_size * i);
@@ -409,7 +412,8 @@ namespace trkf {
                                                               const bool checkValidPoints,
                                                               const int maxMomentum_MeV,
                                                               const double min_resolution,
-                                                              const double max_resolution)
+                                                              const double max_resolution,
+                                                              TTree *t1)
   {
     std::vector<double> recoX;
     std::vector<double> recoY;
@@ -525,7 +529,22 @@ namespace trkf {
     double const p_mcs = pars[0];
     double const p_mcs_e [[maybe_unused]] = erpars[0];
 
+    t1->SetBranchAddress("azx", &bazx);
+    t1->SetBranchAddress("azy", &bazy);
+    t1->SetBranchAddress("ei", &bei);
+    t1->SetBranchAddress("ej", &bej);
+    t1->SetBranchAddress("len", &blen);
 
+    // art::FindManyP<recob::PFParticle> fmPFParticle(tracks, event, fTrackLabel);
+    blen = trk->Length();
+    for (size_t i = 0; i < bvals[0].size(); i++){
+      // std::cout << "filling ... " << endl;
+      bazx = bvals[0][i];
+      bazy = bvals[1][i];
+      bei = bvals[2][i];
+      bej = bvals[3][i];
+      t1->Fill();
+    }
     return mstatus ? p_mcs : -1.0;
 
   }
@@ -596,7 +615,7 @@ namespace trkf {
                                                 std::vector<double>& th,
                                                 std::vector<double>& ind,
                                                 Segments const& segments,
-                                                double const thick) const
+                                                double const thick) 
   {
     auto const& segnx = segments.nx;
     auto const& segny = segments.ny;
@@ -684,6 +703,10 @@ namespace trkf {
               }
             }
           }
+          bvals[0].push_back(azx);
+          bvals[1].push_back(azy);
+          bvals[2].push_back(Li * cL);
+          bvals[3].push_back(Lj * cL);
           break; // of course !
         }
       }
