@@ -4,7 +4,6 @@
 #ifndef TrackMomentumCalculator_H
 #define TrackMomentumCalculator_H
 
-#include "art/Framework/Principal/Event.h"
 #include "canvas/Persistency/Common/Ptr.h"
 #include "lardataobj/RecoBase/Track.h"
 
@@ -28,17 +27,15 @@ namespace trkf {
     *
     * @param  minLength minimum length in cm of tracks (length here is based on the amout of segments)
     * @param  maxLength maximum length in cm of tracks (length here is based on the amout of segments)
-    * @param  steps_size size in cm of each segment to compute scattering
+    * @param  stes_size size in cm of each segment to compute scattering
     */
     TrackMomentumCalculator(double minLength = 100.0,
                             double maxLength = 1350.0,
-                            double steps_size = 10.,
-                            int angleMethod = 1,
-                            int nsteps = 6);
+                            double steps_size = 10.);
 
     double GetTrackMomentum(double trkrange, int pdg) const;
     /**
-    * @brief  Calculate muon momentum (GeV) using multiple coulomb scattering. Chi2 minimization of the Highland formula
+    * @brief  Calculate muon momentum (MeV) using multiple coulomb scattering. Chi2 minimization of the Highland formula
     *
     * @param  trk the muon track
     * @param  checkValidPoints rather take into account only valid points or not
@@ -46,16 +43,13 @@ namespace trkf {
     *
     * TODO: Add better description of the steps done.
     *
-    * @return momentum in GeV
+    * @return momentum in MeV
     */
     double GetMomentumMultiScatterChi2(art::Ptr<recob::Track> const& trk,
-                                       const art::Event &evt,
                                        const bool checkValidPoints = false,
-                                       const int maxMomentum_MeV = 7500,
-                                       const double min_resolution = 0,
-                                       const double max_resolution = 45);
+                                       const int maxMomentum_MeV = 7500);
     /**
-    * @brief  Calculate muon momentum (GeV) using multiple coulomb scattering by log likelihood
+    * @brief  Calculate muon momentum (MeV) using multiple coulomb scattering by log likelihood
     *
     * @param  trk the muon track
     * @param  checkValidPoints rather take into account only valid points or not
@@ -65,14 +59,13 @@ namespace trkf {
     *
     * TODO: Add better description of the steps done
     *
-    * @return momentum in GeV
+    * @return momentum in MeV
     */
     double GetMomentumMultiScatterLLHD(art::Ptr<recob::Track> const& trk,
-                                       const art::Event &evt,
                                        const bool checkValidPoints = false,
                                        const int maxMomentum_MeV = 7500,
-                                       const double min_resolution = 0.001,
-                                       const double max_resolution = 800);
+                                       const int MomentumStep_MeV = 10,
+                                       const int max_resolution = 0);
     double GetMuMultiScatterLLHD3(art::Ptr<recob::Track> const& trk, bool dir);
     TVector3 GetMultiScatterStartingPoint(art::Ptr<recob::Track> const& trk);
 
@@ -94,7 +87,6 @@ namespace trkf {
                                         std::vector<double>& segnx,
                                         std::vector<double>& segny,
                                         std::vector<double>& segnz,
-                                        std::vector<bool>& segn_isvalid,
                                         std::vector<double>& vx,
                                         std::vector<double>& vy,
                                         std::vector<double>& vz);
@@ -111,16 +103,19 @@ namespace trkf {
       std::vector<double> y, ny;
       std::vector<double> z, nz;
       std::vector<double> L;
-      std::vector<bool> nvalid;
     };
 
+
+    std::optional<Segments> getSegEachPoint(std::vector<double> const& xxx,
+                                            std::vector<double> const& yyy,
+                                            std::vector<double> const& zzz);
     /**
     * @brief Split tracks into segments to calculate the scattered angle later. Check DOI 10.1088/1748-0221/12/10/P10010
     *
     * @param xxx 3D reconstructed points x-axis
     * @param yyy 3D reconstructed points y-axiy
     * @param zzz 3D reconstructed points z-axiz
-    * @param seg_size Segments size defined in class constructor
+    * @seg_size Segments size defined in class constructor
     *
     * TODO: Add better description of steps
     *
@@ -169,7 +164,7 @@ namespace trkf {
     * @param Q
     * @param s
     *
-    * @return Momentum in GeV
+    * @return Momentum in MeV
     */
     double my_g(double xx, double Q, double s) const;
 
@@ -185,7 +180,7 @@ namespace trkf {
     *
     * TODO: Add better description of steps
     *
-    * @return momentum in GeV
+    * @return momentum in MeV
     */
     double my_mcs_llhd(std::vector<double> const& dEi,
                        std::vector<double> const& dEj,
@@ -211,12 +206,13 @@ namespace trkf {
     */
     double find_angle(double vz, double vy) const;
 
-    int n_steps;
+    int n_steps{18};
     std::vector<double> steps;
 
     double minLength;
     double maxLength;
     double steps_size;
+    bool debug{false};
     double rad_length{14.0};
 
     // The following are objects that are created but not drawn or
@@ -238,16 +234,6 @@ namespace trkf {
     TGraph gr_seg_xy{};
     TGraph gr_seg_yz{};
     TGraph gr_seg_xz{};
-
-    enum ScatterAngleMethods
-    {
-      kAnglezx = 1,    ///< Use scattered angle z-x (z is along the particle's direction)
-      kAnglezy,        ///< Use scattered angle z-y
-      kAngleCombined,  ///< Use space angle: sqrt( zx^2 + zy^2 )/sqrt(2)
-    };
-    
-    ScatterAngleMethods fMCSAngleMethod;
-
   };
 
 } // namespace trkf

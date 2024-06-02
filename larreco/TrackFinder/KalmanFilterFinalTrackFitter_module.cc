@@ -613,7 +613,7 @@ double trkf::KalmanFilterFinalTrackFitter::setMomValue(
   const int pId) const
 {
   double result = p_().options().pval();
-  if (p_().options().pFromMSChi2()) { result = tmc.GetMomentumMultiScatterChi2(ptrack); }
+  if (p_().options().pFromMSChi2()) { result = 0; }
   else if (p_().options().pFromLength()) {
     result = tmc.GetTrackMomentum(ptrack->Length(), pId);
   }
