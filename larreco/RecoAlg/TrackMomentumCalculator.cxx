@@ -3,6 +3,7 @@
 // \author sowjanyag@phys.ksu.edu
 #pragma GCC diagnostic ignored "-Wunused-variable"
 
+#include "art/Framework/Services/Registry/ServiceHandle.h"
 #include "larreco/RecoAlg/TrackMomentumCalculator.h"
 #include "art/Framework/Principal/Event.h"
 #include "cetlib/pow.h"
@@ -10,7 +11,12 @@
 #include "dunereco/AnaUtils/DUNEAnaEventUtils.h"
 #include "nusimdata/SimulationBase/MCTruth.h"
 #include "nusimdata/SimulationBase/MCFlux.h"
+#include "lardata/DetectorInfoServices/DetectorClocksService.h"
+#include "larsim/Utils/TruthMatchUtils.h"
+#include "dunereco/AnaUtils/DUNEAnaTrackUtils.h"
+#include "dunereco/AnaUtils/DUNEAnaPFParticleUtils.h"
 
+#include "larcore/Geometry/Geometry.h"
 #include <array>
 #include <cassert>
 #include <cmath>
@@ -283,6 +289,58 @@ namespace {
 
 namespace trkf {
 
+bool TrackMomentumCalculator::IsPointContained(const double x, const double y, const double z)
+{
+    geo::Point_t const position{x,y,z};
+    art::ServiceHandle<geo::Geometry> fGeometry;
+
+    // geo::TPCID tpcID(fGeometry->FindTPCAtPosition(position));
+    // if (!(fGeometry->HasTPC(tpcID)))
+    //     return false;
+
+    double minX(std::numeric_limits<double>::max());
+    double maxX(std::numeric_limits<double>::lowest());
+    double minY(std::numeric_limits<double>::max());
+    double maxY(std::numeric_limits<double>::lowest());
+    double minZ(std::numeric_limits<double>::max());
+    double maxZ(std::numeric_limits<double>::lowest());
+    for (auto const& tpc : fGeometry->Iterate<geo::TPCGeo>())
+    {
+            minX = std::min(minX,tpc.MinX());
+            maxX = std::max(maxX,tpc.MaxX());
+            minY = std::min(minY,tpc.MinY());
+            maxY = std::max(maxY,tpc.MaxY());
+            minZ = std::min(minZ,tpc.MinZ());
+            maxZ = std::max(maxZ,tpc.MaxZ());
+    }
+
+    const double fDistanceToWallThreshold = 0;
+    minX += fDistanceToWallThreshold;
+    maxX -= fDistanceToWallThreshold;
+    minY += fDistanceToWallThreshold;
+    maxY -= fDistanceToWallThreshold;
+    minZ += fDistanceToWallThreshold;
+    maxZ -= fDistanceToWallThreshold;
+
+    if (x - minX < -1.*std::numeric_limits<double>::epsilon() ||
+        x - maxX > std::numeric_limits<double>::epsilon())
+    {
+      return false;
+    }
+    if (y - minY < -1.*std::numeric_limits<double>::epsilon() ||
+        y - maxY > std::numeric_limits<double>::epsilon())
+    {
+      return false;
+    }
+    if (z - minZ < -1.*std::numeric_limits<double>::epsilon() ||
+        z - maxZ > std::numeric_limits<double>::epsilon())
+    {
+      return false;
+    }
+
+    return true;
+}
+
   TrackMomentumCalculator::TrackMomentumCalculator(double const min,
                                                    double const max,
                                                    double const stepsize,
@@ -432,14 +490,64 @@ namespace trkf {
       }
     }
     if (found==false) return -1;
-    int n_points = mcmuon->NumberTrajectoryPoints();
-    auto const& pos = mcmuon->Trajectory();
-    for (int i = 0; i < n_points; i++) {
-      // if (checkValidPoints && !trk->HasValidPoint(i)) continue;
-      recoX.push_back(pos.X(i));
-      recoY.push_back(pos.Y(i));
-      recoZ.push_back(pos.Z(i));
+
+
+    art::Ptr< recob::PFParticle > thepfp(dune_ana::DUNEAnaTrackUtils::GetPFParticle(trk,evt,"pandoraTrack"));
+    std::vector<art::Ptr<recob::SpacePoint>> spacePoints(dune_ana::DUNEAnaPFParticleUtils::GetSpacePoints(thepfp, evt, "pandora"));
+    
+    std::string type = "mc"; // mc, reco or sp
+    int n_points_trk = trk->NumberTrajectoryPoints();
+    for (int i = 0; i < n_points_trk; i++) {
+      if (checkValidPoints && !trk->HasValidPoint(i)) continue;
+      auto const& pos = trk->LocationAtPoint(i);
+      bx.push_back(pos.X());
+      by.push_back(pos.Y());
+      bz.push_back(pos.Z());
+      if (type=="reco"){
+        recoX.push_back(pos.X());
+        recoY.push_back(pos.Y());
+        recoZ.push_back(pos.Z());
+      }
     }
+
+    int n_points_sp = spacePoints.size();
+    auto const &firstpoint = spacePoints.front();
+    auto const &lastpoint = spacePoints.back();
+    double const diff_first = std::sqrt(cet::sum_of_squares(firstpoint->XYZ()[0] - bx[0], firstpoint->XYZ()[1] - by[0], firstpoint->XYZ()[2] - bz[0]));
+    double const diff_last = std::sqrt(cet::sum_of_squares(lastpoint->XYZ()[0] - bx[0], lastpoint->XYZ()[1] - by[0], lastpoint->XYZ()[2] - bz[0]));
+    if (diff_last < diff_first){
+      std::reverse(spacePoints.begin(), spacePoints.end());
+    }
+    for (int i = 0; i < n_points_sp; i++) {
+      auto const& pos = spacePoints[i]->XYZ();
+      bspx.push_back(pos[0]);
+      bspy.push_back(pos[1]);
+      bspz.push_back(pos[2]);
+      if (type=="sp"){
+        recoX.push_back(pos[0]);
+        recoY.push_back(pos[1]);
+        recoZ.push_back(pos[2]);
+      }
+    }
+
+    if (type=="mc")
+    {
+      bx.clear();
+      by.clear();
+      bz.clear();
+      auto const& pos = mcmuon->Trajectory();
+      int n_points = mcmuon->NumberTrajectoryPoints();
+      for (int i = 0; i < n_points; i++) {
+        if (!IsPointContained(pos.X(i), pos.Y(i), pos.Z(i))) break;
+        bx.push_back(pos.X(i));
+        by.push_back(pos.Y(i));
+        bz.push_back(pos.Z(i));
+        recoX.push_back(pos.X(i));
+        recoY.push_back(pos.Y(i));
+        recoZ.push_back(pos.Z(i));
+      }
+    }
+
     if (recoX.size() < 2) return -1.0;
 
     if (!plotRecoTracks_(recoX, recoY, recoZ)) return -1.0;
@@ -481,19 +589,13 @@ namespace trkf {
     double minP = std::sqrt(minE*minE - m_muon*m_muon);
 
     // Assumes that the smallet possible energy is given by 90% p with CSDA
-    auto const recoL = trk->Length();
-    double const minPrange = this->GetTrackMomentum(recoL, 13)*0.9;
+    auto recoL = trk->Length();
+    if (type=="mc") recoL = recoSegmentLength;
+    double const minPrange = this->GetTrackMomentum(recoL, 13)*0.8;
 
-    if (minPrange > minP){
+    // if (minPrange > minP){
       minP = minPrange;
-    }
-    double maximum_rms = ComputeExpetecteRMS(minP, seg_size/rad_length);
-
-    for (unsigned int i = 0; i < ndEi; i++){
-      if (abs(dthij[i]) > 7*maximum_rms){
-        dthij_valid[i] = false;
-      }
-    }
+    // }
 
     ROOT::Minuit2::Minuit2Minimizer mP{};
     FcnWrapperLLHD const wrapper{(dEi), (dEj), (dthij), (ind), (dthij_valid), (seg_size), (correction)};
@@ -529,22 +631,62 @@ namespace trkf {
     double const p_mcs = pars[0];
     double const p_mcs_e [[maybe_unused]] = erpars[0];
 
-    t1->SetBranchAddress("azx", &bazx);
-    t1->SetBranchAddress("azy", &bazy);
-    t1->SetBranchAddress("ei", &bei);
-    t1->SetBranchAddress("ej", &bej);
+    // t1->SetBranchAddress("x", &bxptr);
+    // t1->SetBranchAddress("y", &byptr);
+    // t1->SetBranchAddress("z", &bzptr);
+    t1->SetBranchAddress("azx", &bazx_ptr);
+    t1->SetBranchAddress("azy", &bazy_ptr);
+    t1->SetBranchAddress("avalid", &bavalid_ptr);
+    // t1->SetBranchAddress("nseg", &nseg_tmp_ptr);
     t1->SetBranchAddress("len", &blen);
+    t1->SetBranchAddress("trkpdg", &btrkpdg);
+    // t1->SetBranchAddress("spx", &bspxptr);
+    // t1->SetBranchAddress("spy", &bspyptr);
+    // t1->SetBranchAddress("spz", &bspzptr);
+    // t1->SetBranchAddress("dEdx_w", &bdedxwptr);
+    t1->SetBranchAddress("recovtxx", &brecovtxx);
+    t1->SetBranchAddress("recovtxy", &brecovtxy);
+    t1->SetBranchAddress("recovtxz", &brecovtxz);
 
-    // art::FindManyP<recob::PFParticle> fmPFParticle(tracks, event, fTrackLabel);
-    blen = trk->Length();
-    for (size_t i = 0; i < bvals[0].size(); i++){
-      // std::cout << "filling ... " << endl;
-      bazx = bvals[0][i];
-      bazy = bvals[1][i];
-      bei = bvals[2][i];
-      bej = bvals[3][i];
-      t1->Fill();
+    art::Ptr< recob::PFParticle > nupfp(dune_ana::DUNEAnaEventUtils::GetNeutrino(evt,"pandora"));
+
+    art::Ptr< recob::Vertex > vertex(dune_ana::DUNEAnaPFParticleUtils::GetVertex(nupfp, evt, "pandora"));
+    double xyz[3] = {0.0, 0.0, 0.0} ;
+    vertex->XYZ(xyz);
+    brecovtxx = xyz[0];
+    brecovtxy = xyz[1];
+    brecovtxz = xyz[2];
+    for (unsigned int i = 0; i < dthij_valid.size()-1; i++){
+      bavalid.push_back(dthij_valid[i]&dthij_valid[i+1]);
     }
+
+    blen = trk->Length();
+    btrkpdg = 0;
+    auto const clockData = art::ServiceHandle<detinfo::DetectorClocksService const>()->DataFor(evt);
+    
+    const std::vector<art::Ptr<recob::Hit> > allHits(dune_ana::DUNEAnaTrackUtils::GetHits(trk, evt, "pandoraTrack"));
+
+    TruthMatchUtils::G4ID g4ID(TruthMatchUtils::TrueParticleIDFromTotalRecoHits(clockData, allHits, true));
+    if (TruthMatchUtils::Valid(g4ID))
+    {
+      for (uint imc = 0; imc < mcparticles.size(); imc++){
+        if ( mcparticles[imc]->TrackId() == g4ID ){
+          btrkpdg = mcparticles[imc]->PdgCode();
+          break;
+        }
+      }
+    }
+
+    art::Ptr<anab::Calorimetry> trkcalo(dune_ana::DUNEAnaTrackUtils::GetCalorimetry(trk, evt, "pandoraTrack", "pandoracalo"));
+
+    bdedxw = trkcalo->dEdx();
+
+    bazx = bvals[0];
+    bazy = bvals[1];
+    bei = bvals[2];
+    bej = bvals[3];
+    t1->Fill();
+
     return mstatus ? p_mcs : -1.0;
 
   }
@@ -699,14 +841,14 @@ namespace trkf {
                 th.push_back(azy);
               }
               else if(fMCSAngleMethod == kAngleCombined){
-                th.push_back(std::sqrt((azx*azx + azy*azy))); // space angle (applying correction of sqrt(2))
+                th.push_back(std::sqrt((azx*azx + azy*azy)*2)); // space angle (applying correction of sqrt(2))
               }
             }
           }
           bvals[0].push_back(azx);
           bvals[1].push_back(azy);
-          bvals[2].push_back(Li * cL);
-          bvals[3].push_back(Lj * cL);
+          bvals[2].push_back(Li);
+          bvals[3].push_back(Lj);
           break; // of course !
         }
       }
@@ -739,10 +881,13 @@ namespace trkf {
       }
     }
     if (found==false) return -1;
-    int n_points = mcmuon->NumberTrajectoryPoints();
     auto const& pos = mcmuon->Trajectory();
+
+    int n_points = mcmuon->NumberTrajectoryPoints();
+    // int n_points = trk->NumberTrajectoryPoints();
     for (int i = 0; i < n_points; i++) {
       // if (checkValidPoints && !trk->HasValidPoint(i)) continue;
+      // auto const& pos = trk->LocationAtPoint(i);
       recoX.push_back(pos.X(i));
       recoY.push_back(pos.Y(i));
       recoZ.push_back(pos.Z(i));
@@ -915,11 +1060,10 @@ namespace trkf {
     bool isvalid = true;
     // In case vx, vy, etc have 3 points, probably two are just "linear"
     // interpolations. In this case, the angle of scattering will be zero.
-    if (na <= 3){
+    if (na <= 2){
       isvalid=false;
     }
     
-    segn_isvalid.push_back(isvalid);
 
 
     // computes the average in x, y, z
@@ -1012,6 +1156,9 @@ namespace trkf {
       segnx.push_back(ax);
       segny.push_back(ay);
       segnz.push_back(az);
+      segn_isvalid.push_back(isvalid);
+      nseg_tmp.push_back(na);
+
     }
     // clear the vectors
     vx.clear();
@@ -1050,6 +1197,7 @@ namespace trkf {
     std::vector<double> segy, segny;
     std::vector<double> segz, segnz;
     std::vector<bool> segn_isvalid;
+    nseg_tmp.clear();
     std::vector<double> segL;
 
     int ntot = 0;

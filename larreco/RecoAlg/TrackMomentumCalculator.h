@@ -22,6 +22,8 @@ namespace trkf {
 
   class TrackMomentumCalculator {
   public:
+
+    bool IsPointContained(const double x, const double y, const double z);
     /**
     * @brief  Constructor
     *
@@ -250,12 +252,46 @@ namespace trkf {
     
     ScatterAngleMethods fMCSAngleMethod;
 
-    double bazx;
-    double bazy;
-    double bei;
-    double bej;
+    int nsegs;
+    std::vector<double> bazx;
+    std::vector<double> bazy;
+    std::vector<double> bei;
+    std::vector<double> bej;
+    std::vector<double> *bazx_ptr = &bazx;
+    std::vector<double> *bazy_ptr = &bazy;
+    std::vector<double> *bei_ptr = &bei;
+    std::vector<double> *bej_ptr = &bej;
+
+    int ncoord;
+    std::vector<double> bx;
+    std::vector<double> by;
+    std::vector<double> bz;
+    std::vector<double> *bxptr = &bx;
+    std::vector<double> *byptr = &by;
+    std::vector<double> *bzptr = &bz;
+
+    std::vector<double> bspx;
+    std::vector<double> bspy;
+    std::vector<double> bspz;
+    std::vector<double> *bspxptr = &bspx;
+    std::vector<double> *bspyptr = &bspy;
+    std::vector<double> *bspzptr = &bspz;
+
+    std::vector<float> bdedxw;
+    std::vector<float> *bdedxwptr = &bdedxw;
+
+    std::vector<bool> bavalid;
+    std::vector<bool> *bavalid_ptr = &bavalid;
+
     double blen;
+    int btrkpdg;
+    double brecovtxx;
+    double brecovtxy;
+    double brecovtxz;
     std::vector<std::vector<double>> bvals;
+
+    std::vector<int> nseg_tmp;
+    std::vector<int> *nseg_tmp_ptr = &nseg_tmp;
 
   };
 

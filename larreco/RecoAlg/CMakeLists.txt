@@ -143,6 +143,8 @@ cet_make_library(SOURCE
   lardata::SimpleFits
   lardataalg::DetectorInfo
   lardataalg::UtilitiesHeaders
+  dunereco_AnaUtils
+  larsim::Utils
   lardataobj::RecoBase
   nusimdata::SimulationBase
   art::Framework_Principal
