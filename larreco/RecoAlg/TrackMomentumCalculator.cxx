@@ -110,8 +110,8 @@ namespace {
 
   constexpr double MomentumDependentConstant(const double p) 
   {
-      double a = 0.1049;
-      double c = 11.0038;
+      double a = 0.129;
+      double c = 10.054;
       return (a/(p*p)) + c;
   }
   double ComputeExpetecteRMS(const double p, const double red_length){
@@ -236,7 +236,7 @@ namespace {
         if (dthij_valid_.at(i)==false) continue;
 
         // Uses geometric mean of energy
-		double Eij = std::sqrt(Ei*Ej);
+		double Eij = Ei;
 
 		// Total momentum of the muon including momentum lost upstream of this segment (converting Eij to momentum)
 		double pij = std::sqrt(Eij*Eij - m_muon*m_muon);
