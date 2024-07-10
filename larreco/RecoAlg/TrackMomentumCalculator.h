@@ -135,6 +135,12 @@ namespace trkf {
                                           std::vector<double> const& zzz,
                                           double seg_size);
 
+
+    std::optional<Segments> getSegTracksSoft_(std::vector<double> const& xxx,
+                                              std::vector<double> const& yyy,
+                                              std::vector<double> const& zzz,
+                                              double seg_size);
+
     /**
     * @brief Gets the scattered angle RMS for a all segments
     *

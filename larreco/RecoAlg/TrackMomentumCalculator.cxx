@@ -110,8 +110,8 @@ namespace {
 
   constexpr double MomentumDependentConstant(const double p) 
   {
-      double a = 0.129;
-      double c = 10.054;
+      double a = 0.079;
+      double c = 10.435;
       return (a/(p*p)) + c;
   }
   double ComputeExpetecteRMS(const double p, const double red_length){
@@ -186,9 +186,10 @@ namespace {
                             std::vector<double>& dthij,
                             std::vector<double>& ind,
                             std::vector<bool>& dthij_valid,
+                            std::vector<double>& dseg,
                             double stepsize,
                             double correction)
-      : dEi_{dEi}, dEj_{dEj}, dthij_{dthij}, ind_{ind}, dthij_valid_{dthij_valid}, stepsize_{stepsize}, correction_{correction}
+      : dEi_{dEi}, dEj_{dEj}, dthij_{dthij}, ind_{ind}, dthij_valid_{dthij_valid}, dseg_{dseg}, stepsize_{stepsize}, correction_{correction}
     {}
 
 
@@ -196,7 +197,6 @@ namespace {
     {
       double result = 0.0;
 
-      double red_length = stepsize_ / rad_length;
 
       double p = x[0];
       double theta0 = x[1];
@@ -205,41 +205,29 @@ namespace {
       double Etot = std::sqrt( cet::sum_of_squares(p, m_muon) );
 
       double Ei{Etot};
-      double Ej{Etot};
 
       double dEi{0};
-      double dEj{0};
       auto const n = dEi_.size(); // number of segments of energy
 
       bool addpenality = false;
       for (std::size_t i = 0; i < n; ++i) {
-
-        // ensures spline only once
-        if (i>0){// first point does not lose energy on i
-        // Energy lost upstream of this segment:
-          dEi = dEj; // dEj was evaluated in previous step
-          // Total energy of the muon including energy lost upstream of this segment 
-          Ei -= dEi;
+        double red_length = dseg_[i] / rad_length;
+        Ei -= dEi;
+        if (Ei >= E_GeV[0]){//otherwise keep dEi the same (In any case, this is close to p = 0)
+          dEi = dEdx_vs_E_spline3.Eval(Ei)*dseg_[i];
         }
-        if (Ej >= E_GeV[0]){
-          dEj = dEdx_vs_E_spline3.Eval(Ej)*stepsize_;
-        }//otherwise keep dEj the same (In any case, this is close to p = 0)
-		Ej -= dEj;
-        if (Ej < m_muon){
-          Ej = m_muon+0.010; // Reached zero energy, keep this value constant to not evaluate `nan` in pij nor tH0
+        else{
+          dEi = dEdx_GeV_per_cm[0]*dseg_[i];
+        }
+        if (Ei <= m_muon){
+          Ei = m_muon+0.010; // Reached zero energy, keep this value constant to not evaluate `nan` in pij nor tH0
           addpenality = true;
-          if (Ei < m_muon){
-            Ei = m_muon+0.010;
-          }
         }
 
-        if (dthij_valid_.at(i)==false) continue;
-
-        // Uses geometric mean of energy
-		double Eij = Ei;
+        // if (dthij_valid_.at(i)==false) continue;
 
 		// Total momentum of the muon including momentum lost upstream of this segment (converting Eij to momentum)
-		double pij = std::sqrt(Eij*Eij - m_muon*m_muon);
+		double pij = std::sqrt(Ei*Ei - m_muon*m_muon);
 
         // Highland formula
         // Parameters given at Particle Data Group https://pdg.lbl.gov/2023/web/viewer.html?file=../reviews/rpp2022-rev-passage-particles-matter.pdf
@@ -263,7 +251,7 @@ namespace {
         prob = -0.5 * std::log(2.0 * TMath::Pi()) - 0.5*std::log(rms_square) - 0.5 * DT * DT / rms_square;
 
         if (addpenality){
-          prob -= 2*rms_square*rms_square;
+          prob -= 2*rms_square;
         }
 
         result = result - 2.0 * prob; // Adds for each segment
@@ -279,6 +267,7 @@ namespace {
     std::vector<double> const dthij_;
     std::vector<double> const ind_;
     std::vector<bool> const dthij_valid_;
+    std::vector<double> const dseg_;
     double const stepsize_;
     double const correction_;
 
@@ -579,6 +568,8 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     std::vector<double> dthij;
     std::vector<double> ind;
     std::vector<bool> dthij_valid = segments->nvalid;
+    std::vector<double> dseg = segments->L;
+
     if (getDeltaThetaij_(dEi, dEj, dthij, ind, *segments, seg_size) != 0) return -1;
 
     auto const ndEi = dEi.size();
@@ -588,28 +579,14 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     if (fMCSAngleMethod == kAngleCombined){
       correction = std::sqrt(2.);
     }
-    // Get minimum energy that we can use spline
-    // And estimate min energy to avoid as much as possible energies below this point
-    double minE = E_GeV[0]+0.010; 
-    for (unsigned i = 0; i < ndEi; i++){
-      double dE = dEdx_vs_E_spline3.Eval(minE)*seg_size;
-      minE+=dE;
-    }
 
-    // minimum momentum so energy does not go to below spline
-    double minP = std::sqrt(minE*minE - m_muon*m_muon);
-
-    // Assumes that the smallet possible energy is given by 90% p with CSDA
+    // Assumes that the smallet possible energy is given by 80% p with CSDA
     auto recoL = trk->Length();
     if (type=="mc") recoL = recoSegmentLength;
-    double const minPrange = this->GetTrackMomentum(recoL, 13)*0.8;
-
-    // if (minPrange > minP){
-      minP = minPrange;
-    // }
+    double const minP = this->GetTrackMomentum(recoL, 13);
 
     ROOT::Minuit2::Minuit2Minimizer mP{};
-    FcnWrapperLLHD const wrapper{(dEi), (dEj), (dthij), (ind), (dthij_valid), (seg_size), (correction)};
+    FcnWrapperLLHD const wrapper{(dEi), (dEj), (dthij), (ind), (dthij_valid), (dseg), (seg_size), (correction)};
     ROOT::Math::Functor FCA([&wrapper](double const* xs) { return wrapper.my_mcs_llhd(xs); }, 2);
 
     mP.SetFunction(FCA);
@@ -619,7 +596,10 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     if (startpoint < min_resolution) startpoint = (max_resolution-min_resolution)/2.;
     if (max_resolution == 0) startpoint = min_resolution;
 
-    mP.SetLimitedVariable(0, "p_{MCS}", minP*2, minP, 0.001, maxMomentum_MeV / 1.e3);
+    // Starting energy as double of the energy by range
+    // Step as 10 %
+    // Minimum value at 60%
+    mP.SetLimitedVariable(0, "p_{MCS}", minP*2, minP*0.1, minP*0.6, maxMomentum_MeV / 1.e3);
     mP.SetLimitedVariable(1, "#delta#theta", startpoint, startpoint/2., min_resolution, max_resolution);
     if (max_resolution == 0){
       mP.FixVariable(1);
@@ -808,7 +788,7 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
 
     int tot = a1;
 
-    for (int i = 0; i < tot; i++) {
+    for (int i = 0; i < tot-1; i++) {
       double const dx = segnx.at(i);
       double const dy = segny.at(i);
       double const dz = segnz.at(i);
@@ -833,58 +813,47 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
       TVector3 const Ry{vec_y.Dot(basex), vec_y.Dot(basey), vec_y.Dot(basez)};
       TVector3 const Rz{vec_z.Dot(basex), vec_z.Dot(basey), vec_z.Dot(basez)};
 
-      double const refL = segL.at(i);
 
-      // Now loop over next segments until thick1 is reached in the next segment
-      for (int j = i; j < tot; j++) {
-        double const L1 = segL.at(j);
+      double const here_dx = segnx.at(i+1);
+      double const here_dy = segny.at(i+1);
+      double const here_dz = segnz.at(i+1);
 
-        double const dz1 = L1 - refL;
+      TVector3 const here_vec{here_dx, here_dy, here_dz};
+      TVector3 const rot_here{Rx.Dot(here_vec), Ry.Dot(here_vec), Rz.Dot(here_vec)};
 
-        if (dz1 >= thick) {
-          double const here_dx = segnx.at(j);
-          double const here_dy = segny.at(j);
-          double const here_dz = segnz.at(j);
+      double const scx = rot_here.X();
+      double const scy = rot_here.Y();
+      double const scz = rot_here.Z();
 
-          TVector3 const here_vec{here_dx, here_dy, here_dz};
-          TVector3 const rot_here{Rx.Dot(here_vec), Ry.Dot(here_vec), Rz.Dot(here_vec)};
+      double const azy = find_angle(scz, scy);
+      double const azx = find_angle(scz, scx);
 
-          double const scx = rot_here.X();
-          double const scy = rot_here.Y();
-          double const scz = rot_here.Z();
+      constexpr double ULim = 10000.0; // Avoid huge (wrong) angles
+      constexpr double LLim = -10000.0;
 
-          double const azy = find_angle(scz, scy);
-          double const azx = find_angle(scz, scx);
+      double const Li = segL.at(i);
+      double const Lj = segL.at(i+1);
 
-          constexpr double ULim = 10000.0; // Avoid huge (wrong) angles
-          constexpr double LLim = -10000.0;
+      if (azy <= ULim && azy >= LLim) { // safe scatter in the yz plane
 
-          double const Li = segL.at(i);
-          double const Lj = segL.at(j);
-
-          if (azy <= ULim && azy >= LLim) { // safe scatter in the yz plane
-
-            if (azx <= ULim && azx >= LLim) { // safe scatter in the za plane
-              ei.push_back(Li); // Energy deposited at i
-              ej.push_back(Lj); // Energy deposited at j
-              if (fMCSAngleMethod == kAnglezx){
-                th.push_back(azx); // scattered angle z-x
-              }
-              else if(fMCSAngleMethod == kAnglezy){
-                th.push_back(azy);
-              }
-              else if(fMCSAngleMethod == kAngleCombined){
-                th.push_back(std::sqrt((azx*azx + azy*azy)*2)); // space angle (applying correction of sqrt(2))
-              }
-            }
+        if (azx <= ULim && azx >= LLim) { // safe scatter in the za plane
+          ei.push_back(Li); // Energy deposited at i
+          ej.push_back(Lj); // Energy deposited at i+1
+          if (fMCSAngleMethod == kAnglezx){
+            th.push_back(azx); // scattered angle z-x
           }
-          bvals[0].push_back(azx);
-          bvals[1].push_back(azy);
-          bvals[2].push_back(Li);
-          bvals[3].push_back(Lj);
-          break; // of course !
+          else if(fMCSAngleMethod == kAnglezy){
+            th.push_back(azy);
+          }
+          else if(fMCSAngleMethod == kAngleCombined){
+            th.push_back(std::sqrt((azx*azx + azy*azy))); // space angle (applying correction of sqrt(2))
+          }
         }
       }
+      bvals[0].push_back(azx);
+      bvals[1].push_back(azy);
+      bvals[2].push_back(Li);
+      bvals[3].push_back(Lj);
     }
 
     return 0;
@@ -1190,9 +1159,9 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
       segny.push_back(ay);
       segnz.push_back(az);
       segn_isvalid.push_back(isvalid);
-      nseg_tmp.push_back(na);
 
     }
+
     // clear the vectors
     vx.clear();
     vy.clear();
@@ -1230,10 +1199,8 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     std::vector<double> segy, segny;
     std::vector<double> segz, segnz;
     std::vector<bool> segn_isvalid;
-    nseg_tmp.clear();
     std::vector<double> segL;
 
-    int ntot = 0;
 
     n_seg = 0;
 
@@ -1269,7 +1236,7 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         segy.push_back(y0);
         segz.push_back(z0);
 
-        segL.push_back(stag);
+        segL.push_back(seg_size);
 
         // TGraph
         x_seg[n_seg] = x0;
@@ -1282,7 +1249,6 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         vy.push_back(y0);
         vz.push_back(z0);
 
-        ntot++;
 
         indC = i + 1;
 
@@ -1312,14 +1278,13 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         vy.push_back(y1);
         vz.push_back(z1);
 
-        ntot++;
       }
       
       /* If current point is inside segment length w.r.t. the first point of
        * the segment (x0,y0,z0), but the next point is outsize: create a new
        * point in between (x1,y1,z1) and (x2,y2,z2) in which will be exacly at
        * the segment length (w.r.t. to the first point) This is done using the
-       * consides law for a given factor `t` times dr (x2-x1, ...), and so:
+       * cosines law for a given factor `t` times dr (x2-x1, ...), and so:
        *
        * (ds)^2 = (dr1)^2 + (t*dr)^2 + 2*dot_product(dr1, t*dr)
        * Using cos(180-theta) = -cos(theta))
@@ -1362,7 +1327,8 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         segy.push_back(yp);
         segz.push_back(zp);
 
-        segL.push_back(1.0 * n_seg * 1.0 * seg_size + stag);
+        // segL.push_back(1.0 * n_seg * 1.0 * seg_size + stag);
+        segL.push_back(seg_size);
 
         // for TGraph
         x_seg[n_seg] = xp;
@@ -1381,7 +1347,6 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         vy.push_back(y0);
         vz.push_back(z0);
 
-        ntot++;
         if (n_seg <= 1) // This should never happen
           return std::nullopt;
 
@@ -1391,7 +1356,6 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
 
 
         // Starting over
-        ntot = 1;
         vx.push_back(x0);
         vy.push_back(y0);
         vz.push_back(z0);
@@ -1425,7 +1389,8 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         segx.push_back(xp);
         segy.push_back(yp);
         segz.push_back(zp);
-        segL.push_back(1.0 * n_seg * 1.0 * seg_size + stag);
+        // segL.push_back(1.0 * n_seg * 1.0 * seg_size + stag);
+        segL.push_back(seg_size);
 
         // for TGraph
         x_seg[n_seg] = xp;
@@ -1442,7 +1407,6 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         vy.push_back(y0);
         vz.push_back(z0);
 
-        ntot++;
         if (n_seg <= 1) // This should never happen
           return std::nullopt;
 
@@ -1451,7 +1415,6 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         compute_max_fluctuation_vector(segx, segy, segz, segnx, segny, segnz, segn_isvalid, vx, vy, vz);
 
         // vectors are cleared in previous step
-        ntot = 1;
         vx.push_back(x0);
         vy.push_back(y0);
         vz.push_back(z0);
@@ -1469,6 +1432,105 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     gr_seg_xz = TGraph{n_seg, z_seg, x_seg};
     gr_seg_xy = TGraph{n_seg, x_seg, y_seg};
 
+    return std::make_optional<Segments>(Segments{segx, segnx, segy, segny, segz, segnz, segL, segn_isvalid});
+  }
+
+  /* This function will group each point of the track inside segments with
+   * approximately size of `seg_size`.
+   * It returns computed new points `segx, segy, segz` separated by `seg_size`,
+   * the deviation `segnx, ...` between this points and the distance `segL`
+   */
+  std::optional<TrackMomentumCalculator::Segments> TrackMomentumCalculator::getSegTracksSoft_(
+    std::vector<double> const& xxx,
+    std::vector<double> const& yyy,
+    std::vector<double> const& zzz,
+    double const seg_size)
+  {
+
+    int a1 = xxx.size();
+    int a2 = yyy.size();
+    int a3 = zzz.size();
+
+    if ((a1 != a2) || (a1 != a3) || (a2 != a3)) {
+      cout << " ( Digitize reco tacks ) Error ! " << endl;
+      return std::nullopt;
+    }
+    // values to be filled and returned
+    std::vector<double> segx, segnx;
+    std::vector<double> segy, segny;
+    std::vector<double> segz, segnz;
+    std::vector<bool> segn_isvalid;
+    std::vector<double> segL;
+
+
+    n_seg = 0;
+
+    double x0{};
+    double y0{};
+    double z0{};
+
+    // These vectors will keep the points inside reach segments
+    // They are cleared inside the function `compute_max_fluctuation_vector`
+    // each time it finishes with a segment
+    std::vector<double> vx;
+    std::vector<double> vy;
+    std::vector<double> vz;
+    current_first_idx = 0;
+
+    x0 = xxx.at(0);
+    y0 = yyy.at(0);
+    z0 = zzz.at(0);
+    segx.push_back(x0);
+    segy.push_back(y0);
+    segz.push_back(z0);
+    n_seg++;
+
+    vx.push_back(x0);
+    vy.push_back(y0);
+    vz.push_back(z0);
+
+    for (int i = 1; i < a1; i++) { // starting at second point (i=1) if stag set to zero
+      // current point
+      double const x1 = xxx.at(i);
+      double const y1 = yyy.at(i);
+      double const z1 = zzz.at(i);
+
+      // distante from previous point
+      double const dr1 = std::sqrt(cet::sum_of_squares(x1 - x0, y1 - y0, z1 - z0)); 
+
+      if (dr1 >= seg_size || i == a1-1){ // that is ok, finish segment with current length (soft)
+        segx.push_back(x1);
+        segy.push_back(y1);
+        segz.push_back(z1);
+        segL.push_back(dr1);
+
+        vx.push_back(x1);
+        vy.push_back(y1);
+        vz.push_back(z1);
+        n_seg++;
+
+        compute_max_fluctuation_vector(segx, segy, segz, segnx, segny, segnz, segn_isvalid, vx, vy, vz);
+        x0 = x1;
+        y0 = y1;
+        z0 = z1;
+
+        // vectors are cleared in previous step
+        vx.push_back(x0);
+        vy.push_back(y0);
+        vz.push_back(z0);
+        idx_first_pt_on_segment.push_back(current_first_idx);
+        current_first_idx = i;
+        continue;
+
+      }
+      else if(dr1 < seg_size){// everything ok, keep adding 
+        vx.push_back(x1);
+        vy.push_back(y1);
+        vz.push_back(z1);
+        continue;
+      }
+      
+    }
     return std::make_optional<Segments>(Segments{segx, segnx, segy, segny, segz, segnz, segL, segn_isvalid});
   }
 
