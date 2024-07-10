@@ -284,6 +284,10 @@ namespace trkf {
     std::vector<bool> *bavalid_ptr = &bavalid;
 
     double blen;
+    double blenseg;
+    double bmclen;
+    double Ereco;
+    bool fitstatus;
     int btrkpdg;
     double brecovtxx;
     double brecovtxy;
@@ -292,6 +296,13 @@ namespace trkf {
 
     std::vector<int> nseg_tmp;
     std::vector<int> *nseg_tmp_ptr = &nseg_tmp;
+
+
+    std::vector<double> Ei_true;
+    std::vector<int> idx_first_pt_on_segment;
+    int current_first_idx;
+    std::vector<double> Ei_seg_true;
+    std::vector<double> *Ei_seg_trueptr = &Ei_seg_true;
 
   };
 

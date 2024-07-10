@@ -507,6 +507,7 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         recoX.push_back(pos.X());
         recoY.push_back(pos.Y());
         recoZ.push_back(pos.Z());
+        Ei_true.push_back(0);
       }
     }
 
@@ -535,6 +536,7 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
       bx.clear();
       by.clear();
       bz.clear();
+      bmclen = 0;
       auto const& pos = mcmuon->Trajectory();
       int n_points = mcmuon->NumberTrajectoryPoints();
       for (int i = 0; i < n_points; i++) {
@@ -542,9 +544,11 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         bx.push_back(pos.X(i));
         by.push_back(pos.Y(i));
         bz.push_back(pos.Z(i));
+        if (i>0) bmclen += std::sqrt( cet::square(pos.X(i) - recoX.back()) +  cet::square(pos.Y(i) - recoY.back()) + cet::square(pos.Z(i) - recoZ.back()));
         recoX.push_back(pos.X(i));
         recoY.push_back(pos.Y(i));
         recoZ.push_back(pos.Z(i));
+        Ei_true.push_back(mcmuon->E(i));
       }
     }
 
@@ -555,12 +559,19 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     double const seg_size{steps_size};
 
     auto const segments = getSegTracks_(recoX, recoY, recoZ, seg_size);
+    // auto const segments = getSegTracksSoft_(recoX, recoY, recoZ, seg_size);
+
+    if (idx_first_pt_on_segment.size()>0){
+      for (unsigned int iseg = 0; iseg < idx_first_pt_on_segment.size()-1; iseg++){ //discard last point, as it does not enter as segment
+        Ei_seg_true.push_back(Ei_true[idx_first_pt_on_segment[iseg]]);
+      }
+    }
     if (!segments.has_value()) return -1.0;
 
     auto const seg_steps = segments->x.size();
     if (seg_steps < 2) return -1;
 
-    double const recoSegmentLength = segments->L.at(seg_steps - 1);
+    double const recoSegmentLength = std::reduce(segments->L.begin(), segments->L.end());
     if (recoSegmentLength < minLength || recoSegmentLength > maxLength) return -1;
 
     std::vector<double> dEi;
@@ -621,6 +632,7 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
 
 
     bool const mstatus = mP.Minimize();
+    fitstatus = mstatus;
 
     mP.Hesse();
 
@@ -629,21 +641,38 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
 
 
     double const p_mcs = pars[0];
+    Ereco = std::sqrt(cet::sum_of_squares(p_mcs, m_muon));
     double const p_mcs_e [[maybe_unused]] = erpars[0];
 
-    // t1->SetBranchAddress("x", &bxptr);
-    // t1->SetBranchAddress("y", &byptr);
-    // t1->SetBranchAddress("z", &bzptr);
+    // if (t1->GetBranchStatus("x")) t1->SetBranchAddress("x", &bxptr);
+    // else t1->Branch("x", &bxptr);
+    // if (t1->GetBranchStatus("y")) t1->SetBranchAddress("y", &byptr);
+    // else t1->Branch("y", &byptr);
+    // if (t1->GetBranchStatus("z")) t1->SetBranchAddress("z", &bzptr);
+    // else t1->Branch("z", &bzptr);
     t1->SetBranchAddress("azx", &bazx_ptr);
     t1->SetBranchAddress("azy", &bazy_ptr);
     t1->SetBranchAddress("avalid", &bavalid_ptr);
+    t1->SetBranchAddress("ei", &bei_ptr);
+    // t1->SetBranchAddress("ej", &bej_ptr);
+    t1->SetBranchAddress("Ei_true", &Ei_seg_trueptr);
     // t1->SetBranchAddress("nseg", &nseg_tmp_ptr);
     t1->SetBranchAddress("len", &blen);
+    if (t1->GetBranchStatus("lenseg")) t1->SetBranchAddress("lenseg", &blenseg);
+    else t1->Branch("lenseg", &blenseg);
     t1->SetBranchAddress("trkpdg", &btrkpdg);
-    // t1->SetBranchAddress("spx", &bspxptr);
-    // t1->SetBranchAddress("spy", &bspyptr);
-    // t1->SetBranchAddress("spz", &bspzptr);
-    // t1->SetBranchAddress("dEdx_w", &bdedxwptr);
+    if (t1->GetBranchStatus("Ereco")) t1->SetBranchAddress("Ereco", &Ereco);
+    else t1->Branch("Ereco", &Ereco);
+    if (t1->GetBranchStatus("fitstatus")) t1->SetBranchAddress("fitstatus", &fitstatus);
+    else t1->Branch("fitstatus", &fitstatus);
+    // if (t1->GetBranchStatus("spx")) t1->SetBranchAddress("spx", &bspxptr);
+    // else t1->Branch("spx", &bspxptr);
+    // if (t1->GetBranchStatus("spy")) t1->SetBranchAddress("spy", &bspyptr);
+    // else t1->Branch("spy", &bspyptr);
+    // if (t1->GetBranchStatus("spz")) t1->SetBranchAddress("spz", &bspzptr);
+    // else t1->Branch("spz", &bspzptr);
+    // if (t1->GetBranchStatus("dEdx_w")) t1->SetBranchAddress("dEdx_w", &bdedxwptr);
+    // else t1->Branch("dEdx_w", &bdedxwptr);
     t1->SetBranchAddress("recovtxx", &brecovtxx);
     t1->SetBranchAddress("recovtxy", &brecovtxy);
     t1->SetBranchAddress("recovtxz", &brecovtxz);
@@ -657,10 +686,12 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     brecovtxy = xyz[1];
     brecovtxz = xyz[2];
     for (unsigned int i = 0; i < dthij_valid.size()-1; i++){
-      bavalid.push_back(dthij_valid[i]&dthij_valid[i+1]);
+      bavalid.push_back(dthij_valid[i] & dthij_valid[i+1]);
     }
 
     blen = trk->Length();
+    if (type=="mc") blen = bmclen;
+    blenseg = recoSegmentLength;
     btrkpdg = 0;
     auto const clockData = art::ServiceHandle<detinfo::DetectorClocksService const>()->DataFor(evt);
     
@@ -685,6 +716,8 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     bazy = bvals[1];
     bei = bvals[2];
     bej = bvals[3];
+
+
     t1->Fill();
 
     return mstatus ? p_mcs : -1.0;
@@ -1221,6 +1254,7 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     std::vector<double> vx;
     std::vector<double> vy;
     std::vector<double> vz;
+    current_first_idx = 0;
 
     for (int i = 0; i < a1; i++) {
       x0 = xxx.at(i);
@@ -1355,11 +1389,16 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         // vx, vy, vz are used and cleared afterwards
         compute_max_fluctuation_vector(segx, segy, segz, segnx, segny, segnz, segn_isvalid, vx, vy, vz);
 
+
         // Starting over
         ntot = 1;
         vx.push_back(x0);
         vy.push_back(y0);
         vz.push_back(z0);
+
+        idx_first_pt_on_segment.push_back(current_first_idx);
+        current_first_idx = i;
+
       }
       else if (dr1 > seg_size) { // in this case, just interpolate until reach `seg_size`
 
@@ -1416,6 +1455,9 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         vx.push_back(x0);
         vy.push_back(y0);
         vz.push_back(z0);
+
+        idx_first_pt_on_segment.push_back(current_first_idx);
+        current_first_idx = i+1;
       }
 
       if (n_seg >= (stopper + 1.0) && seg_stop != -1) break;
