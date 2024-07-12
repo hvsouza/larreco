@@ -1613,14 +1613,12 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
       TVector3 const Ry{vec_y.Dot(basex), vec_y.Dot(basey), vec_y.Dot(basez)};
       TVector3 const Rz{vec_z.Dot(basex), vec_z.Dot(basey), vec_z.Dot(basez)};
 
-      double const refL = segL.at(i);
+      double const refL = i*segL.at(i); // all segL should have the same value here
 
       for (int j = i; j < tot; j++) {
-        double const L1 = segL.at(j);
-        // double const L2 = segL.at(j + 1);
+        double const L1 = j*segL.at(j); 
 
         double const dz1 = L1 - refL;
-        // double const dz2 = L2 - refL;
 
         if (dz1 >= thick) {
           double const here_dx = segnx.at(j);
