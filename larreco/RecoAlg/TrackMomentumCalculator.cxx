@@ -883,16 +883,43 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
       }
     }
     if (found==false) return -1;
-    auto const& pos = mcmuon->Trajectory();
 
-    int n_points = mcmuon->NumberTrajectoryPoints();
-    // int n_points = trk->NumberTrajectoryPoints();
-    for (int i = 0; i < n_points; i++) {
-      // if (checkValidPoints && !trk->HasValidPoint(i)) continue;
-      // auto const& pos = trk->LocationAtPoint(i);
-      recoX.push_back(pos.X(i));
-      recoY.push_back(pos.Y(i));
-      recoZ.push_back(pos.Z(i));
+
+    art::Ptr< recob::PFParticle > thepfp(dune_ana::DUNEAnaTrackUtils::GetPFParticle(trk,evt,"pandoraTrack"));
+    std::vector<art::Ptr<recob::SpacePoint>> spacePoints(dune_ana::DUNEAnaPFParticleUtils::GetSpacePoints(thepfp, evt, "pandora"));
+    
+    std::string type = "mc"; // mc, reco or sp
+    int n_points_trk = trk->NumberTrajectoryPoints();
+    for (int i = 0; i < n_points_trk; i++) {
+      if (checkValidPoints && !trk->HasValidPoint(i)) continue;
+      auto const& pos = trk->LocationAtPoint(i);
+      bx.push_back(pos.X());
+      by.push_back(pos.Y());
+      bz.push_back(pos.Z());
+      if (type=="reco"){
+        recoX.push_back(pos.X());
+        recoY.push_back(pos.Y());
+        recoZ.push_back(pos.Z());
+      }
+    }
+
+    if (type=="mc")
+    {
+      bx.clear();
+      by.clear();
+      bz.clear();
+      bmclen = 0;
+      auto const& pos = mcmuon->Trajectory();
+      int n_points = mcmuon->NumberTrajectoryPoints();
+      for (int i = 0; i < n_points; i++) {
+        if (!IsPointContained(pos.X(i), pos.Y(i), pos.Z(i))) break;
+        bx.push_back(pos.X(i));
+        by.push_back(pos.Y(i));
+        bz.push_back(pos.Z(i));
+        recoX.push_back(pos.X(i));
+        recoY.push_back(pos.Y(i));
+        recoZ.push_back(pos.Z(i));
+      }
     }
 
     if (recoX.size() < 2) return -1.0;
