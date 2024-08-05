@@ -106,7 +106,7 @@ namespace {
   TVector3 const basex{1, 0, 0};
   TVector3 const basey{0, 1, 0};
   TVector3 const basez{0, 0, 1};
-  constexpr double kcal{0.0021}; // Approximation of dE/dx for mip muon in LAr
+  constexpr double kcal{0.0024}; // Approximation of dE/dx for mip muon in LAr
 
   constexpr double MomentumDependentConstant(const double p) 
   {
@@ -153,7 +153,9 @@ namespace {
         double res1 = 0.0;
         // Highland formula
         // Parameters given at Particle Data Group https://pdg.lbl.gov/2023/web/viewer.html?file=../reviews/rpp2022-rev-passage-particles-matter.pdf
-        if (xx > 0 && p > 0) res1 = (13.6 / p) * std::sqrt(l0) * (1.0 + 0.038 * std::log(l0));
+		double beta = std::sqrt( 1 - ((m_muon*m_muon)/(p*p + m_muon*m_muon)) );
+        if (xx > 0 && p > 0) res1 = ( 13.6 / (p*beta) ) * ( 1.0 + 0.038 * TMath::Log( l0 / cet::square( beta ) ) ) * std::sqrt( l0 );
+        res1 *= correction_;
 
         res1 = std::sqrt(res1 * res1 + theta0 * theta0);
 
@@ -224,7 +226,7 @@ namespace {
           addpenality = true;
         }
 
-        // if (dthij_valid_.at(i)==false) continue;
+        if (dthij_valid_.at(i)==false) continue;
 
 		// Total momentum of the muon including momentum lost upstream of this segment (converting Eij to momentum)
 		double pij = std::sqrt(Ei*Ei - m_muon*m_muon);
