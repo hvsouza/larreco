@@ -344,6 +344,10 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     for (int i = 1; i <= n_steps; i++) {
       steps.push_back(steps_size * i);
     }
+    if (type=="reco"){
+      angle_correction = 1./0.757;
+      check_valid = true;
+    }
   }
 
   double TrackMomentumCalculator::GetTrackMomentum(double trkrange, int pdg) const
@@ -486,7 +490,6 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     art::Ptr< recob::PFParticle > thepfp(dune_ana::DUNEAnaTrackUtils::GetPFParticle(trk,evt,"pandoraTrack"));
     std::vector<art::Ptr<recob::SpacePoint>> spacePoints(dune_ana::DUNEAnaPFParticleUtils::GetSpacePoints(thepfp, evt, "pandora"));
     
-    std::string type = "mc"; // mc, reco or sp
     int n_points_trk = trk->NumberTrajectoryPoints();
     for (int i = 0; i < n_points_trk; i++) {
       if (checkValidPoints && !trk->HasValidPoint(i)) continue;
@@ -549,8 +552,8 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
 
     double const seg_size{steps_size};
 
-    auto const segments = getSegTracks_(recoX, recoY, recoZ, seg_size);
-    // auto const segments = getSegTracksSoft_(recoX, recoY, recoZ, seg_size);
+    // auto const segments = getSegTracks_(recoX, recoY, recoZ, seg_size);
+    auto const segments = getSegTracksSoft_(recoX, recoY, recoZ, seg_size);
 
     if (idx_first_pt_on_segment.size()>0){
       for (unsigned int iseg = 0; iseg < idx_first_pt_on_segment.size()-1; iseg++){ //discard last point, as it does not enter as segment
@@ -848,7 +851,7 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
             th.push_back(azy);
           }
           else if(fMCSAngleMethod == kAngleCombined){
-            th.push_back(std::sqrt((azx*azx + azy*azy))); // space angle (applying correction of sqrt(2))
+            th.push_back(std::sqrt(azx*azx + azy*azy)*angle_correction); // space angle (applying correction of sqrt(2))
           }
         }
       }
@@ -890,7 +893,6 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     art::Ptr< recob::PFParticle > thepfp(dune_ana::DUNEAnaTrackUtils::GetPFParticle(trk,evt,"pandoraTrack"));
     std::vector<art::Ptr<recob::SpacePoint>> spacePoints(dune_ana::DUNEAnaPFParticleUtils::GetSpacePoints(thepfp, evt, "pandora"));
     
-    std::string type = "mc"; // mc, reco or sp
     int n_points_trk = trk->NumberTrajectoryPoints();
     for (int i = 0; i < n_points_trk; i++) {
       if (checkValidPoints && !trk->HasValidPoint(i)) continue;
@@ -1091,7 +1093,7 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     bool isvalid = true;
     // In case vx, vy, etc have 3 points, probably two are just "linear"
     // interpolations. In this case, the angle of scattering will be zero.
-    if (na <= 2){
+    if (check_valid && na <= 2){
       isvalid=false;
     }
     
@@ -1650,7 +1652,7 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
                 buf0.push_back(azy);
               }
               else if(fMCSAngleMethod == kAngleCombined){
-                buf0.push_back(std::sqrt((azx*azx + azy*azy))); // space angle (applying correction of sqrt(2))
+                buf0.push_back(std::sqrt(azx*azx + azy*azy)); // space angle (applying correction of sqrt(2))
               }
             }
           }

@@ -310,6 +310,12 @@ namespace trkf {
     std::vector<double> Ei_seg_true;
     std::vector<double> *Ei_seg_trueptr = &Ei_seg_true;
 
+    std::string type = "reco"; // mc, reco or sp
+
+    // dont change
+    double angle_correction = 1;
+    bool check_valid = false;
+
   };
 
 } // namespace trkf
