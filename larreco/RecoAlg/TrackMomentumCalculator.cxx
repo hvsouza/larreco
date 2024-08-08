@@ -484,6 +484,25 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
         break;
       }
     }
+
+    t1->SetBranchAddress("trkpdg", &btrkpdg);
+    btrkpdg = 0;
+    auto const clockData = art::ServiceHandle<detinfo::DetectorClocksService const>()->DataFor(evt);
+    
+    const std::vector<art::Ptr<recob::Hit> > allHits(dune_ana::DUNEAnaTrackUtils::GetHits(trk, evt, "pandoraTrack"));
+
+    TruthMatchUtils::G4ID g4ID(TruthMatchUtils::TrueParticleIDFromTotalRecoHits(clockData, allHits, true));
+    if (TruthMatchUtils::Valid(g4ID))
+    {
+      for (uint imc = 0; imc < mcparticles.size(); imc++){
+        if ( mcparticles[imc]->TrackId() == g4ID ){
+          btrkpdg = mcparticles[imc]->PdgCode();
+          break;
+        }
+      }
+    }
+    t1->Fill();
+    if (1==1) return -1;
     if (found==false) return -1;
 
 
@@ -629,38 +648,6 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     Ereco = std::sqrt(cet::sum_of_squares(p_mcs, m_muon));
     double const p_mcs_e [[maybe_unused]] = erpars[0];
 
-    // if (t1->GetBranchStatus("x")) t1->SetBranchAddress("x", &bxptr);
-    // else t1->Branch("x", &bxptr);
-    // if (t1->GetBranchStatus("y")) t1->SetBranchAddress("y", &byptr);
-    // else t1->Branch("y", &byptr);
-    // if (t1->GetBranchStatus("z")) t1->SetBranchAddress("z", &bzptr);
-    // else t1->Branch("z", &bzptr);
-    t1->SetBranchAddress("azx", &bazx_ptr);
-    t1->SetBranchAddress("azy", &bazy_ptr);
-    t1->SetBranchAddress("avalid", &bavalid_ptr);
-    t1->SetBranchAddress("ei", &bei_ptr);
-    // t1->SetBranchAddress("ej", &bej_ptr);
-    t1->SetBranchAddress("Ei_true", &Ei_seg_trueptr);
-    // t1->SetBranchAddress("nseg", &nseg_tmp_ptr);
-    t1->SetBranchAddress("len", &blen);
-    if (t1->GetBranchStatus("lenseg")) t1->SetBranchAddress("lenseg", &blenseg);
-    else t1->Branch("lenseg", &blenseg);
-    t1->SetBranchAddress("trkpdg", &btrkpdg);
-    if (t1->GetBranchStatus("Ereco")) t1->SetBranchAddress("Ereco", &Ereco);
-    else t1->Branch("Ereco", &Ereco);
-    if (t1->GetBranchStatus("fitstatus")) t1->SetBranchAddress("fitstatus", &fitstatus);
-    else t1->Branch("fitstatus", &fitstatus);
-    // if (t1->GetBranchStatus("spx")) t1->SetBranchAddress("spx", &bspxptr);
-    // else t1->Branch("spx", &bspxptr);
-    // if (t1->GetBranchStatus("spy")) t1->SetBranchAddress("spy", &bspyptr);
-    // else t1->Branch("spy", &bspyptr);
-    // if (t1->GetBranchStatus("spz")) t1->SetBranchAddress("spz", &bspzptr);
-    // else t1->Branch("spz", &bspzptr);
-    // if (t1->GetBranchStatus("dEdx_w")) t1->SetBranchAddress("dEdx_w", &bdedxwptr);
-    // else t1->Branch("dEdx_w", &bdedxwptr);
-    t1->SetBranchAddress("recovtxx", &brecovtxx);
-    t1->SetBranchAddress("recovtxy", &brecovtxy);
-    t1->SetBranchAddress("recovtxz", &brecovtxz);
 
     art::Ptr< recob::PFParticle > nupfp(dune_ana::DUNEAnaEventUtils::GetNeutrino(evt,"pandora"));
 
@@ -677,21 +664,6 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
     blen = trk->Length();
     if (type=="mc") blen = bmclen;
     blenseg = recoSegmentLength;
-    btrkpdg = 0;
-    auto const clockData = art::ServiceHandle<detinfo::DetectorClocksService const>()->DataFor(evt);
-    
-    const std::vector<art::Ptr<recob::Hit> > allHits(dune_ana::DUNEAnaTrackUtils::GetHits(trk, evt, "pandoraTrack"));
-
-    TruthMatchUtils::G4ID g4ID(TruthMatchUtils::TrueParticleIDFromTotalRecoHits(clockData, allHits, true));
-    if (TruthMatchUtils::Valid(g4ID))
-    {
-      for (uint imc = 0; imc < mcparticles.size(); imc++){
-        if ( mcparticles[imc]->TrackId() == g4ID ){
-          btrkpdg = mcparticles[imc]->PdgCode();
-          break;
-        }
-      }
-    }
 
     art::Ptr<anab::Calorimetry> trkcalo(dune_ana::DUNEAnaTrackUtils::GetCalorimetry(trk, evt, "pandoraTrack", "pandoracalo"));
 
