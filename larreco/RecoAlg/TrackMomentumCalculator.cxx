@@ -552,8 +552,8 @@ bool TrackMomentumCalculator::IsPointContained(const double x, const double y, c
 
     double const seg_size{steps_size};
 
-    // auto const segments = getSegTracks_(recoX, recoY, recoZ, seg_size);
-    auto const segments = getSegTracksSoft_(recoX, recoY, recoZ, seg_size);
+    auto const segments = getSegTracks_(recoX, recoY, recoZ, seg_size);
+    // auto const segments = getSegTracksSoft_(recoX, recoY, recoZ, seg_size);
 
     if (idx_first_pt_on_segment.size()>0){
       for (unsigned int iseg = 0; iseg < idx_first_pt_on_segment.size()-1; iseg++){ //discard last point, as it does not enter as segment
